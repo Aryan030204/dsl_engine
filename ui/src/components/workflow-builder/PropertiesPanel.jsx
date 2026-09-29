@@ -13,7 +13,10 @@ const METRIC_OPTIONS = [
   'sessions',
   'cvr',
   'atc_rate',
-  'atc_sessions'
+  'atc_sessions',
+  'cod_orders',
+  'ppcod_orders',
+  'prepaid_orders'
 ];
 
 const RANK_BY_OPTIONS = [
@@ -99,12 +102,21 @@ const DIMENSION_OPTIONS = [
 
 const BRANCH_METRIC_OPTIONS = [
   'orders_delta_pct',
+  'cod_orders_delta_pct',
+  'ppcod_orders_delta_pct',
+  'prepaid_orders_delta_pct',
   'sessions_delta_pct',
   'cvr_delta_pct',
   'atc_rate_delta_pct',
   'atc_sessions_delta_pct',
   'current_orders',
   'baseline_orders',
+  'current_cod_orders',
+  'baseline_cod_orders',
+  'current_ppcod_orders',
+  'baseline_ppcod_orders',
+  'current_prepaid_orders',
+  'baseline_prepaid_orders',
   'current_sessions',
   'baseline_sessions',
   'current_atc_sessions',

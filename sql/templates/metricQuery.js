@@ -46,6 +46,56 @@ baseline_orders AS (
   FROM shopify_orders
   WHERE created_at >= ?
     AND created_at <  ?
+),
+current_payment_orders AS (
+  SELECT
+    COALESCE(SUM(payment_type = 'COD'), 0) AS cod_orders,
+    COALESCE(SUM(payment_type = 'PPCOD'), 0) AS ppcod_orders,
+    COALESCE(SUM(payment_type = 'Prepaid'), 0) AS prepaid_orders
+  FROM (
+    SELECT
+      order_name,
+      CASE
+        WHEN MAX(payment_gateway_names LIKE '%Gokwik PPCOD%') = 1 THEN 'PPCOD'
+        WHEN MAX(
+          payment_gateway_names IS NULL
+          OR payment_gateway_names = ''
+          OR payment_gateway_names LIKE '%Cash on Delivery (COD)%'
+          OR payment_gateway_names LIKE '%cash_on_delivery%'
+        ) = 1 THEN 'COD'
+        ELSE 'Prepaid'
+      END AS payment_type
+    FROM shopify_orders
+    WHERE created_at >= ?
+      AND created_at <  ?
+      AND order_name IS NOT NULL
+    GROUP BY order_name
+  ) classified
+),
+baseline_payment_orders AS (
+  SELECT
+    COALESCE(SUM(payment_type = 'COD'), 0) AS cod_orders,
+    COALESCE(SUM(payment_type = 'PPCOD'), 0) AS ppcod_orders,
+    COALESCE(SUM(payment_type = 'Prepaid'), 0) AS prepaid_orders
+  FROM (
+    SELECT
+      order_name,
+      CASE
+        WHEN MAX(payment_gateway_names LIKE '%Gokwik PPCOD%') = 1 THEN 'PPCOD'
+        WHEN MAX(
+          payment_gateway_names IS NULL
+          OR payment_gateway_names = ''
+          OR payment_gateway_names LIKE '%Cash on Delivery (COD)%'
+          OR payment_gateway_names LIKE '%cash_on_delivery%'
+        ) = 1 THEN 'COD'
+        ELSE 'Prepaid'
+      END AS payment_type
+    FROM shopify_orders
+    WHERE created_at >= ?
+      AND created_at <  ?
+      AND order_name IS NOT NULL
+    GROUP BY order_name
+  ) classified
 )
 SELECT
   cs.sessions AS current_sessions,
@@ -58,14 +108,24 @@ SELECT
   bs.adjusted_sessions AS baseline_adjusted_sessions,
 
   co.orders AS current_orders,
-  bo.orders AS baseline_orders
+  bo.orders AS baseline_orders,
+  cpo.cod_orders AS current_cod_orders,
+  bpo.cod_orders AS baseline_cod_orders,
+  cpo.ppcod_orders AS current_ppcod_orders,
+  bpo.ppcod_orders AS baseline_ppcod_orders,
+  cpo.prepaid_orders AS current_prepaid_orders,
+  bpo.prepaid_orders AS baseline_prepaid_orders
 FROM current_sessions cs
 CROSS JOIN baseline_sessions bs
 CROSS JOIN current_orders co
-CROSS JOIN baseline_orders bo;
+CROSS JOIN baseline_orders bo
+CROSS JOIN current_payment_orders cpo
+CROSS JOIN baseline_payment_orders bpo;
   `;
 
   const params = [
+    windowStart, windowEnd,
+    baselineStart, baselineEnd,
     windowStart, windowEnd,
     baselineStart, baselineEnd,
     windowStart, windowEnd,
