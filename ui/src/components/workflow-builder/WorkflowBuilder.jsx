@@ -65,8 +65,13 @@ function WorkflowBuilderContent({
       const explicitOutputKey = typeof node?.data?.output_key === 'string'
         ? node.data.output_key.trim()
         : '';
+      const baseMetrics = Array.isArray(node?.data?.base_metrics) && node.data.base_metrics.length
+        ? node.data.base_metrics
+        : (node?.data?.base_metric ? [node.data.base_metric] : ['cvr']);
+      const isMultiMetric = baseMetrics.length > 1;
       if (explicitOutputKey) {
-        keys.add(explicitOutputKey);
+        if (isMultiMetric) baseMetrics.forEach((metric) => keys.add(`${explicitOutputKey}_${metric}`));
+        else keys.add(explicitOutputKey);
       }
 
       const dimensions = Array.isArray(node?.data?.dimensions)
@@ -75,13 +80,13 @@ function WorkflowBuilderContent({
       const firstDimension = typeof dimensions[0] === 'string' ? dimensions[0].trim() : '';
       if (!firstDimension) return;
 
-      keys.add(
+      baseMetrics.forEach((metric) => keys.add(
         buildDefaultBreakdownOutputKey({
-          baseMetric: node?.data?.base_metric,
+          baseMetric: metric,
           dimension: firstDimension,
           filterMode: node?.data?.filter_mode || 'drop',
         })
-      );
+      ));
 
       // Backward compatibility: older workflows may still reference plain dimension keys.
       keys.add(firstDimension);

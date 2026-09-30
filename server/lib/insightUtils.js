@@ -13,6 +13,12 @@ function computeEvidenceScore(entry) {
     return pct == null ? -Infinity : Math.abs(pct) * share;
   }
 
+  if (metric === 'cod_orders' || metric === 'ppcod_orders' || metric === 'prepaid_orders') {
+    const pct = entry.deltas?.[`${metric}_delta_pct`];
+    const share = entry.paymentOrderShare ?? entry.orderShare ?? 0;
+    return pct == null ? -Infinity : Math.abs(pct) * share;
+  }
+
   if (metric === 'sessions') {
     const pct = entry.deltas?.sessions_delta_pct;
     return pct == null ? -Infinity : Math.abs(pct);
@@ -82,6 +88,30 @@ function resolveTopTokenValue(entry, suffix) {
       return entry?.deltas?.orders_delta_pct;
     case 'orders_delta_pct_fmt':
       return formatPct(entry?.deltas?.orders_delta_pct);
+    case 'cod_orders_delta_pct':
+      return entry?.deltas?.cod_orders_delta_pct;
+    case 'cod_orders_delta_pct_fmt':
+      return formatPct(entry?.deltas?.cod_orders_delta_pct);
+    case 'ppcod_orders_delta_pct':
+      return entry?.deltas?.ppcod_orders_delta_pct;
+    case 'ppcod_orders_delta_pct_fmt':
+      return formatPct(entry?.deltas?.ppcod_orders_delta_pct);
+    case 'prepaid_orders_delta_pct':
+      return entry?.deltas?.prepaid_orders_delta_pct;
+    case 'prepaid_orders_delta_pct_fmt':
+      return formatPct(entry?.deltas?.prepaid_orders_delta_pct);
+    case 'current_cod_orders':
+      return entry?.current?.cod_orders;
+    case 'baseline_cod_orders':
+      return entry?.baseline?.cod_orders;
+    case 'current_ppcod_orders':
+      return entry?.current?.ppcod_orders;
+    case 'baseline_ppcod_orders':
+      return entry?.baseline?.ppcod_orders;
+    case 'current_prepaid_orders':
+      return entry?.current?.prepaid_orders;
+    case 'baseline_prepaid_orders':
+      return entry?.baseline?.prepaid_orders;
     default:
       return undefined;
   }

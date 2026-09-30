@@ -15,6 +15,18 @@ const INSIGHT_TOP_TOKEN_SUFFIXES = [
   'sessions_delta_pct_fmt',
   'orders_delta_pct',
   'orders_delta_pct_fmt',
+  'cod_orders_delta_pct',
+  'cod_orders_delta_pct_fmt',
+  'ppcod_orders_delta_pct',
+  'ppcod_orders_delta_pct_fmt',
+  'prepaid_orders_delta_pct',
+  'prepaid_orders_delta_pct_fmt',
+  'current_cod_orders',
+  'baseline_cod_orders',
+  'current_ppcod_orders',
+  'baseline_ppcod_orders',
+  'current_prepaid_orders',
+  'baseline_prepaid_orders',
 ];
 
 const DIMENSION_LABELS = {

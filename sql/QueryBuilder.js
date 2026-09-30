@@ -13,7 +13,7 @@ module.exports = {
     });
   },
 
-  buildDimensionBreakdownQuery({ tenantId, dimension, window, baselineWindow, timezone, filters, includeOrders }) {
+  buildDimensionBreakdownQuery({ tenantId, dimension, window, baselineWindow, timezone, filters, includeOrders, includePaymentOrders }) {
     return templates.dimensionBreakdownQuery({
       tenantId,
       dimension,
@@ -21,7 +21,8 @@ module.exports = {
       baselineWindow,
       timezone,
       filters,
-      includeOrders
+      includeOrders,
+      includePaymentOrders
     });
   }
 };

@@ -1425,17 +1425,23 @@ export default function PropertiesPanel({
                         </div>
                      )}
                         <div>
-                            <label className="block text-xs font-medium text-gray-500 mb-1">Base Metric</label>
-                            <select
-                                className="w-full border text-sm p-1 rounded"
-                                value={data.base_metric || ''}
-                                onChange={(e) => handleChange('base_metric', e.target.value)}
-                            >
-                                <option value="">Select metric...</option>
-                                {METRIC_OPTIONS.map((metric) => (
-                                  <option key={metric} value={metric}>{metric}</option>
-                                ))}
-                            </select>
+                            <label className="block text-xs font-medium text-gray-500 mb-1">Base Metrics (analyzed separately)</label>
+                            <MetricMultiSelect
+                              value={Array.isArray(data.base_metrics) && data.base_metrics.length
+                                ? data.base_metrics
+                                : (data.base_metric ? [data.base_metric] : [])}
+                              onChange={(nextValue) => {
+                                const nextData = {
+                                  ...data,
+                                  base_metrics: nextValue,
+                                  base_metric: nextValue[0] || 'cvr'
+                                };
+                                setData(nextData);
+                                onChange(selectedNode.id, nextData);
+                              }}
+                              placeholder="Add base metric..."
+                            />
+                            <p className="mt-1 text-[11px] text-gray-400">Each metric gets separate results; delta ranking and filtering run independently per metric.</p>
                      </div>
                      <div>
                           <label className="block text-xs font-medium text-gray-500 mb-1">Dimensions (comma separated)</label>

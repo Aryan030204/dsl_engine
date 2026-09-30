@@ -18,6 +18,7 @@ const OUTPUT_KEY_SUGGESTIONS = [
   ...REQUIRED_OUTPUT_KEYS,
   ...OPTIONAL_OUTPUT_KEYS,
 ];
+const PAYMENT_ORDER_METRICS = new Set(['cod_orders', 'ppcod_orders', 'prepaid_orders']);
 
 function sanitizeOutputKeySegment(value) {
   return String(value || '')
@@ -37,6 +38,7 @@ function buildDefaultBreakdownOutputKey({ baseMetric, dimension, filterMode }) {
 
 function detectOutputKeyMode(baseMetric, outputKey) {
   const key = String(outputKey || '').toLowerCase();
+  if (PAYMENT_ORDER_METRICS.has(baseMetric)) return baseMetric;
   if (baseMetric === 'atc_rate' || key.includes('atc_rate')) return 'atc_rate';
   if (baseMetric === 'atc_sessions' || key.includes('atc_sessions')) return 'atc_sessions';
   if (baseMetric === 'orders' || key.includes('orders')) return 'orders';

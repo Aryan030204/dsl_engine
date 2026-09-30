@@ -11,7 +11,9 @@ export const AnalysisNode = ({ data, isConnectable }) => {
 
   // Dimension Breakdown Data
   const dimensions = data.dimensions || (data.dimension ? [data.dimension] : []);
-  const baseMetric = data.base_metric;
+  const baseMetrics = Array.isArray(data.base_metrics) && data.base_metrics.length
+    ? data.base_metrics
+    : (data.base_metric ? [data.base_metric] : []);
 
   return (
     <div className="w-[250px] bg-white border-2 border-blue-400 rounded-lg shadow-sm">
@@ -35,10 +37,14 @@ export const AnalysisNode = ({ data, isConnectable }) => {
             {/* Dimension Breakdown View */}
             {!isComparison && (
                 <div className="space-y-1">
-                    {baseMetric && (
+                    {baseMetrics.length > 0 && (
                         <div className="flex items-center gap-1">
-                            <span className="text-gray-400 text-[10px]">Metric:</span>
-                            <span className="font-mono bg-gray-100 px-1 rounded">{baseMetric}</span>
+                            <span className="text-gray-400 text-[10px]">Metrics:</span>
+                            <div className="flex flex-wrap gap-1">
+                              {baseMetrics.map((metric) => (
+                                <span key={metric} className="font-mono bg-gray-100 px-1 rounded">{metric}</span>
+                              ))}
+                            </div>
                         </div>
                     )}
                     {dimensions.length > 0 && (

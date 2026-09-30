@@ -23,6 +23,10 @@ const ALLOWED_DIMENSIONS = new Set([
 ]);
 
 const ALLOWED_OPS = new Set(['>', '>=', '<', '<=', '==', '!=']);
+const ALLOWED_BREAKDOWN_METRICS = new Set([
+  'orders', 'sessions', 'cvr', 'atc_rate', 'atc_sessions',
+  'cod_orders', 'ppcod_orders', 'prepaid_orders'
+]);
 const {
   getPartialDayProductCompatibilityErrors,
   getPartialDayLandingPagePathCompatibilityErrors
@@ -366,6 +370,21 @@ function validateWorkflowDefinition(definition) {
     }
 
     if (node.type === 'recursive_dimension_breakdown') {
+      if (node.base_metrics !== undefined) {
+        if (!Array.isArray(node.base_metrics) || node.base_metrics.length === 0) {
+          errors.push(`recursive_dimension_breakdown node ${node.id} must include at least one base metric`);
+        } else {
+          for (const metric of node.base_metrics) {
+            if (!ALLOWED_BREAKDOWN_METRICS.has(metric)) {
+              errors.push(`recursive_dimension_breakdown node ${node.id} has unsupported base metric: ${metric}`);
+            }
+          }
+          if (new Set(node.base_metrics).size !== node.base_metrics.length) {
+            errors.push(`recursive_dimension_breakdown node ${node.id} cannot repeat base metrics`);
+          }
+        }
+      }
+
       const dimensions = Array.isArray(node.dimensions) && node.dimensions.length
         ? node.dimensions
         : node.dimension
