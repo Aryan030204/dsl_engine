@@ -59,7 +59,7 @@ app.get('/health', (req, res) => {
 
 // Version check endpoint - update this timestamp on each deploy to verify
 app.get('/version', (req, res) => {
-  res.json({ 
+  res.json({
     version: '1.0.1',
     deployedAt: '2026-02-13T17:00:00Z',
     features: ['atc_sessions_delta_pct', 'branch_rule_evaluations']
@@ -98,9 +98,10 @@ async function start() {
   app.listen(port, () => {
     console.log(`Server listening on ${port}`);
   });
-}
 
-start().catch(err => {
-  console.error(err);
-  process.exit(1);
-});
+}
+  
+  start().catch(err => {
+    console.error(err);
+    process.exit(1);
+  });

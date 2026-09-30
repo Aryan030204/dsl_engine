@@ -18,7 +18,7 @@ function validateTelegramUsers(users = []) {
   return { ok: true, users: normalized };
 }
 
-async function sendTelegram({ title, message, severity = 'info', users, fetchImpl = fetch }) {
+async function sendTelegram({ title, message, image, images, severity = 'info', users, fetchImpl = fetch }) {
   const recipients = validateTelegramUsers(users);
   if (!recipients.ok) {
     return { status: 'failed', provider: 'telegram', error: recipients.error, users: [] };
@@ -38,43 +38,63 @@ async function sendTelegram({ title, message, severity = 'info', users, fetchImp
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
   try {
-    const response = await fetchImpl(`${baseUrl.replace(/\/$/, '')}/alerts`, {
-      method: 'POST',
-      headers: {
-        'x-shared-secret': secret,
-        'x-drains': 'TELEGRAM',
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        alert: { title, message, severity },
-        users: recipients.users
-      }),
-      signal: controller.signal
-    });
+    const imagesToSend = Array.isArray(images) && images.length ? images : (image ? [image] : []);
+    const pageCount = imagesToSend.length;
+    const responses = [];
+    const failures = [];
 
-    const responseText = await response.text();
-    let responseBody;
-    try {
-      responseBody = responseText ? JSON.parse(responseText) : null;
-    } catch {
-      responseBody = responseText;
+    for (let pageIndex = 0; pageIndex < pageCount || (pageCount === 0 && pageIndex === 0); pageIndex += 1) {
+      const pageImage = imagesToSend[pageIndex];
+      const pageTitle = pageCount > 1 ? `${title} (${pageIndex + 1}/${pageCount})` : title;
+      const response = await fetchImpl(`${baseUrl.replace(/\/$/, '')}/alerts`, {
+        method: 'POST',
+        headers: {
+          'x-shared-secret': secret,
+          'x-drains': 'TELEGRAM',
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          alert: {
+            title: pageTitle,
+            message: pageImage ? undefined : message,
+            image: pageImage,
+            imageMimeType: pageImage ? 'image/jpeg' : undefined,
+            severity,
+            delivery: pageImage ? 'image' : 'text'
+          },
+          users: recipients.users
+        }),
+        signal: controller.signal
+      });
+
+      const responseText = await response.text();
+      let responseBody;
+      try {
+        responseBody = responseText ? JSON.parse(responseText) : null;
+      } catch {
+        responseBody = responseText;
+      }
+
+      responses.push(responseBody);
+      const failedResults = Array.isArray(responseBody?.results)
+        ? responseBody.results.filter((result) => result && result.success === false)
+        : [];
+      if (!response.ok || failedResults.length) {
+        failures.push(failedResults[0]?.error || responseBody?.error || `Telegram service returned ${response.status}`);
+      }
     }
 
-    const failedResults = Array.isArray(responseBody?.results)
-      ? responseBody.results.filter((result) => result && result.success === false)
-      : [];
-
-    if (!response.ok || failedResults.length) {
+    if (failures.length) {
       return {
-        status: failedResults.length && response.ok ? 'partial' : 'failed',
+        status: responses.some((response) => response?.results?.some((result) => result?.success)) ? 'partial' : 'failed',
         provider: 'telegram',
         users: recipients.users,
-        error: failedResults[0]?.error || responseBody?.error || `Telegram service returned ${response.status}`,
-        response: responseBody
+        error: failures[0],
+        response: responses
       };
     }
 
-    return { status: 'sent', provider: 'telegram', users: recipients.users, response: responseBody };
+    return { status: 'sent', provider: 'telegram', users: recipients.users, response: responses };
   } catch (error) {
     return {
       status: 'failed',

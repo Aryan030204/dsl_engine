@@ -1,4 +1,6 @@
 const { renderEmail } = require('../server/lib/renderEmail');
+const { renderTelegramImages } = require('../server/lib/renderTelegramImage');
+const { resolveBinding } = require('../server/lib/emailBindings');
 const { sendEmail } = require('../server/services/emailService');
 const { sendTelegram } = require('../server/services/telegramService');
 
@@ -36,10 +38,22 @@ async function MessagingNode(def, context, runtime = {}) {
   }
   if (telegramEnabled) {
     const telegramSender = runtime.telegramSender || sendTelegram;
+    const severity = def.telegram?.severity || 'info';
+    const insightBinding = def.format === 'insight'
+      ? resolveBinding(context, def.template?.insightSource || 'scratch.finalInsight')
+      : null;
     deliveries.telegram = await telegramSender({
       title: rendered.subject,
-      message: rendered.text,
-      severity: def.telegram?.severity || 'info',
+      images: await renderTelegramImages({
+        title: rendered.subject,
+        message: rendered.text,
+        insight: insightBinding?.value,
+        reportViewModel: rendered.viewModel,
+        brandName: context?.meta?.brandName,
+        workflowName: context?.meta?.workflowName,
+        severity
+      }),
+      severity,
       users: def.telegram?.users || []
     });
   }

@@ -5,6 +5,7 @@ import {
   Play, 
   Lightbulb,
   Settings,
+  ShoppingBag,
   LogOut
 } from 'lucide-react';
 import clsx from 'clsx';
@@ -15,6 +16,7 @@ const navItems = [
   { to: '/runs', icon: Play, label: 'Runs' },
   { to: '/insights', icon: Lightbulb, label: 'Insights' },
   { to: '/settings', icon: Settings, label: 'Settings' },
+  { to: '/shopify-hub', icon: ShoppingBag, label: 'Shopify Hub' },
 ];
 
 export default function Sidebar() {
