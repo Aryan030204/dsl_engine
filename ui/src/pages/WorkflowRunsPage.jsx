@@ -14,6 +14,16 @@ export default function WorkflowRunsPage() {
   const [runModalOpen, setRunModalOpen] = useState(false);
   const [rerunningRunId, setRerunningRunId] = useState(null);
 
+  const handleRefresh = async () => {
+    try {
+      const result = await refetch();
+      if (result.isError) throw result.error || new Error('Failed to refresh runs');
+      toast.success('Runs refreshed');
+    } catch (err) {
+      toast.error(err.message || 'Failed to refresh runs');
+    }
+  };
+
   const handleRerun = async (run) => {
     setRerunningRunId(run._id);
     try {
@@ -86,7 +96,7 @@ export default function WorkflowRunsPage() {
           </p>
         </div>
         <div className="flex gap-2">
-          <Button variant="secondary" onClick={() => refetch()}>
+          <Button variant="secondary" onClick={handleRefresh}>
             <RefreshCw className="w-4 h-4 mr-2" />
             Refresh
           </Button>

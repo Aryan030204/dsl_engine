@@ -1623,6 +1623,25 @@ export default function PropertiesPanel({
       case 'insight':
           const isStructured = typeof data.template === 'object' && data.template !== null;
           const mergedInsightTokens = Array.from(new Set(INSIGHT_BASE_TOKENS));
+          const switchInsightTemplate = (targetType) => {
+            const drafts = { ...(data._editorTemplateDrafts || {}) };
+            if (isStructured) {
+              drafts.structured = data.template;
+            } else {
+              drafts.simple = data.template;
+            }
+
+            const nextTemplate = targetType === 'structured'
+              ? (drafts.structured ?? { summary: '', details: [], confidence: '' })
+              : (drafts.simple ?? '');
+            const newData = {
+              ...data,
+              _editorTemplateDrafts: drafts,
+              template: nextTemplate,
+            };
+            setData(newData);
+            onChange(selectedNode.id, newData);
+          };
           
           return (
              <div className="space-y-4">
@@ -1644,13 +1663,13 @@ export default function PropertiesPanel({
                     <div className="flex gap-2">
                          <button
                             className={`px-3 py-1 text-xs rounded border ${!isStructured ? 'bg-green-50 border-green-200 text-green-700' : 'bg-white border-gray-200 text-gray-600'}`}
-                            onClick={() => handleChange('template', '')}
+                            onClick={() => switchInsightTemplate('simple')}
                          >
                             Simple Text
                          </button>
                          <button
                             className={`px-3 py-1 text-xs rounded border ${isStructured ? 'bg-green-50 border-green-200 text-green-700' : 'bg-white border-gray-200 text-gray-600'}`}
-                            onClick={() => handleChange('template', { summary: '', details: [], confidence: '' })}
+                            onClick={() => switchInsightTemplate('structured')}
                          >
                             Structured
                          </button>

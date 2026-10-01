@@ -4,6 +4,7 @@ import { RefreshCw, Clock } from 'lucide-react';
 import { useRecentRuns } from '../api/hooks';
 import { Button, Badge, Card, PageSpinner, EmptyState } from '../components/ui';
 import { useTenant } from '../context/TenantContext';
+import toast from 'react-hot-toast';
 
 function getStatusBadge(status) {
   const statusMap = {
@@ -30,6 +31,16 @@ export default function RunsPage() {
   const { tenantId } = useTenant();
   const { data: runs, isLoading, error, refetch } = useRecentRuns(100);
 
+  const handleRefresh = async () => {
+    try {
+      const result = await refetch();
+      if (result.isError) throw result.error || new Error('Failed to refresh runs');
+      toast.success('Runs refreshed');
+    } catch (err) {
+      toast.error(err.message || 'Failed to refresh runs');
+    }
+  };
+
   if (isLoading) return <PageSpinner />;
 
   if (error) {
@@ -49,7 +60,7 @@ export default function RunsPage() {
             Recent workflow runs for {tenantId}
           </p>
         </div>
-        <Button variant="secondary" onClick={() => refetch()}>
+        <Button variant="secondary" onClick={handleRefresh}>
           <RefreshCw className="w-4 h-4 mr-2" />
           Refresh
         </Button>
