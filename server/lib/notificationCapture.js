@@ -17,10 +17,13 @@ function createCapturingSender() {
     };
   }
 
-  async function telegramSender({ title, message, severity, users }) {
+  async function telegramSender({ title, message, image, images, severity, users }) {
     telegramIntents.push({
       title,
       message,
+      // Rendered report pages (data URLs), when the messaging node produced them.
+      ...(Array.isArray(images) && images.length ? { images: [...images] } : {}),
+      ...(image ? { image } : {}),
       severity,
       users: Array.isArray(users) ? users.map((user) => ({ ...user })) : []
     });

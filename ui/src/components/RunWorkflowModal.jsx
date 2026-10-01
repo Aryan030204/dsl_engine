@@ -161,7 +161,7 @@ export default function RunWorkflowModal({ workflow, onClose }) {
     };
 
     try {
-      const result = await executeWorkflow.mutateAsync({ context });
+      const result = await executeWorkflow.mutateAsync({ context, mode: 'async' });
       toast.success(`Workflow run started: ${result.runId}`);
       onClose();
       navigate(`/workflows/${workflow.workflowId}/runs/${result.runId}`);

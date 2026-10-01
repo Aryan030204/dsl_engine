@@ -7,6 +7,7 @@ import RunsPage from './pages/RunsPage';
 import RunDetailPage from './pages/RunDetailPage';
 import InsightsPage from './pages/InsightsPage';
 import SettingsPage from './pages/SettingsPage';
+import ShopifyHubPage from './pages/ShopifyHubPage';
 import WorkflowBuilderPage from './pages/WorkflowBuilderPage';
 import Login from './pages/Login';
 import Signup from './pages/Signup';
@@ -48,6 +49,7 @@ function App() {
         <Route path="/workflows/:workflowId/runs/:runId" element={<RunDetailPage />} />
         <Route path="/insights" element={<InsightsPage />} />
         <Route path="/settings" element={<SettingsPage />} />
+        <Route path="/shopify-hub" element={<ShopifyHubPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Layout>

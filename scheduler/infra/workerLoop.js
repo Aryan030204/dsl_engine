@@ -89,22 +89,23 @@ async function runLoopMongo({ workerId, intervalMs = 2000, stopSignal }) {
 
 async function runLoopRabbit({ workerId, intervalMs = 2000, stopSignal }) {
   const queue = getRabbitWorkflowRunQueue();
-
-  // Best-effort recovery: re-dispatch runnable DB-backed runs when worker starts.
-  await bootstrapDispatchRunnableRuns();
-  await recoverExpiredRunningRuns();
-
-  const retryTickMs = Number(process.env.SCHEDULER_RETRY_TICK_MS || 2000);
-  const retryTimer = setInterval(async () => {
-    try {
-      await recoverExpiredRunningRuns();
-      await republishDueRetryRuns();
-    } catch (error) {
-      console.error('[scheduler-worker] retry republish failed', error.message);
-    }
-  }, retryTickMs);
+  let retryTimer = null;
 
   try {
+    // Best-effort recovery: re-dispatch runnable DB-backed runs when worker starts.
+    await bootstrapDispatchRunnableRuns();
+    await recoverExpiredRunningRuns();
+
+    const retryTickMs = Number(process.env.SCHEDULER_RETRY_TICK_MS || 2000);
+    retryTimer = setInterval(async () => {
+      try {
+        await recoverExpiredRunningRuns();
+        await republishDueRetryRuns();
+      } catch (error) {
+        console.error('[scheduler-worker] retry republish failed', error.message);
+      }
+    }, retryTickMs);
+
     await queue.consumeRuns({
       stopSignal,
       handler: async ({ runId }) => {
@@ -118,6 +119,9 @@ async function runLoopRabbit({ workerId, intervalMs = 2000, stopSignal }) {
         await processClaimedRun(run);
       }
     });
+  } catch (error) {
+    console.error(`[scheduler-worker] RabbitMQ unavailable; falling back to Mongo polling error=${error.message}`);
+    await runLoopMongo({ workerId, intervalMs, stopSignal });
   } finally {
     clearInterval(retryTimer);
     await queue.close();

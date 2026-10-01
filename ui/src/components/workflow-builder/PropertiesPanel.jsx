@@ -14,7 +14,10 @@ const METRIC_OPTIONS = [
   'sessions',
   'cvr',
   'atc_rate',
-  'atc_sessions'
+  'atc_sessions',
+  'cod_orders',
+  'ppcod_orders',
+  'prepaid_orders'
 ];
 
 // metric_compare can also report store-level sales and AOV (from hour_wise_sales);
@@ -112,6 +115,9 @@ const DIMENSION_OPTIONS = [
 
 const BRANCH_METRIC_OPTIONS = [
   'orders_delta_pct',
+  'cod_orders_delta_pct',
+  'ppcod_orders_delta_pct',
+  'prepaid_orders_delta_pct',
   'sessions_delta_pct',
   'cvr_delta_pct',
   'atc_rate_delta_pct',
@@ -120,6 +126,12 @@ const BRANCH_METRIC_OPTIONS = [
   'aov_delta_pct',
   'current_orders',
   'baseline_orders',
+  'current_cod_orders',
+  'baseline_cod_orders',
+  'current_ppcod_orders',
+  'baseline_ppcod_orders',
+  'current_prepaid_orders',
+  'baseline_prepaid_orders',
   'current_sessions',
   'baseline_sessions',
   'current_atc_sessions',
@@ -1466,17 +1478,23 @@ export default function PropertiesPanel({
                         </div>
                      )}
                         <div>
-                            <label className="block text-xs font-medium text-gray-500 mb-1">Base Metric</label>
-                            <select
-                                className="w-full border text-sm p-1 rounded"
-                                value={data.base_metric || ''}
-                                onChange={(e) => handleChange('base_metric', e.target.value)}
-                            >
-                                <option value="">Select metric...</option>
-                                {METRIC_OPTIONS.map((metric) => (
-                                  <option key={metric} value={metric}>{metric}</option>
-                                ))}
-                            </select>
+                            <label className="block text-xs font-medium text-gray-500 mb-1">Base Metrics (analyzed separately)</label>
+                            <MetricMultiSelect
+                              value={Array.isArray(data.base_metrics) && data.base_metrics.length
+                                ? data.base_metrics
+                                : (data.base_metric ? [data.base_metric] : [])}
+                              onChange={(nextValue) => {
+                                const nextData = {
+                                  ...data,
+                                  base_metrics: nextValue,
+                                  base_metric: nextValue[0] || 'cvr'
+                                };
+                                setData(nextData);
+                                onChange(selectedNode.id, nextData);
+                              }}
+                              placeholder="Add base metric..."
+                            />
+                            <p className="mt-1 text-[11px] text-gray-400">Each metric gets separate results; delta ranking and filtering run independently per metric.</p>
                      </div>
                      <div>
                           <label className="block text-xs font-medium text-gray-500 mb-1">Dimensions (comma separated)</label>
@@ -1650,6 +1668,25 @@ export default function PropertiesPanel({
       case 'insight':
           const isStructured = typeof data.template === 'object' && data.template !== null;
           const mergedInsightTokens = Array.from(new Set(INSIGHT_BASE_TOKENS));
+          const switchInsightTemplate = (targetType) => {
+            const drafts = { ...(data._editorTemplateDrafts || {}) };
+            if (isStructured) {
+              drafts.structured = data.template;
+            } else {
+              drafts.simple = data.template;
+            }
+
+            const nextTemplate = targetType === 'structured'
+              ? (drafts.structured ?? { summary: '', details: [], confidence: '' })
+              : (drafts.simple ?? '');
+            const newData = {
+              ...data,
+              _editorTemplateDrafts: drafts,
+              template: nextTemplate,
+            };
+            setData(newData);
+            onChange(selectedNode.id, newData);
+          };
           
           return (
              <div className="space-y-4">
@@ -1671,13 +1708,13 @@ export default function PropertiesPanel({
                     <div className="flex gap-2">
                          <button
                             className={`px-3 py-1 text-xs rounded border ${!isStructured ? 'bg-green-50 border-green-200 text-green-700' : 'bg-white border-gray-200 text-gray-600'}`}
-                            onClick={() => handleChange('template', '')}
+                            onClick={() => switchInsightTemplate('simple')}
                          >
                             Simple Text
                          </button>
                          <button
                             className={`px-3 py-1 text-xs rounded border ${isStructured ? 'bg-green-50 border-green-200 text-green-700' : 'bg-white border-gray-200 text-gray-600'}`}
-                            onClick={() => handleChange('template', { summary: '', details: [], confidence: '' })}
+                            onClick={() => switchInsightTemplate('structured')}
                          >
                             Structured
                          </button>

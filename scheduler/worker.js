@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 require('dotenv').config();
+require('../lib/dnsOverride').applyDnsOverride();
 
 const { runLoop } = require('./infra/workerLoop');
 const { evaluateDueSchedules, recordMissedTriggers } = require('./app/schedulerService');

@@ -74,9 +74,13 @@ test('with alert state on, a messaging node captures email and Telegram and the 
   assert.equal(mode.capture.intents.length, 1);
   assert.deepEqual(mode.capture.intents[0].to, ['ops@example.com']);
   assert.equal(mode.capture.telegramIntents.length, 1);
-  assert.deepEqual(mode.capture.telegramIntents[0], {
-    title: 'CVR alert', message: mode.capture.telegramIntents[0].message, severity: 'critical', users: [{ username: 'ops_lead' }]
-  });
+  const telegramIntent = mode.capture.telegramIntents[0];
+  assert.equal(telegramIntent.title, 'CVR alert');
+  assert.equal(telegramIntent.severity, 'critical');
+  assert.deepEqual(telegramIntent.users, [{ username: 'ops_lead' }]);
+  assert.match(telegramIntent.message, /CVR dropped/);
+  // The rendered report pages are captured too, so they survive the alert-state hold.
+  assert.match(telegramIntent.images[0], /^data:image\/jpeg;base64,/);
   assert.equal(result.context.scratch.messagingDeliveries.notify.telegram.status, 'deferred');
 });
 

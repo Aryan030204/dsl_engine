@@ -48,11 +48,13 @@ function WorkflowBuilderContent({
   isSaving,
 }) {
   const { fitView } = useReactFlow();
-  const [nodes, setNodes, onNodesChange] = useNodesState([]);
-  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+  const [nodes, setNodes, applyNodesChange] = useNodesState([]);
+  const [edges, setEdges, applyEdgesChange] = useEdgesState([]);
   const [selectedNode, setSelectedNode] = useState(null);
   const [metadata, setMetadata] = useState(initialData || {});
   const [isAttachingWorkflowRef, setIsAttachingWorkflowRef] = useState(false);
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [showUnsavedChangesDialog, setShowUnsavedChangesDialog] = useState(false);
   const workflowImportOptionMap = useMemo(
     () => new Map((workflowImportOptions || []).map((item) => [item.workflowId, item])),
     [workflowImportOptions]
@@ -67,8 +69,13 @@ function WorkflowBuilderContent({
       const explicitOutputKey = typeof node?.data?.output_key === 'string'
         ? node.data.output_key.trim()
         : '';
+      const baseMetrics = Array.isArray(node?.data?.base_metrics) && node.data.base_metrics.length
+        ? node.data.base_metrics
+        : (node?.data?.base_metric ? [node.data.base_metric] : ['cvr']);
+      const isMultiMetric = baseMetrics.length > 1;
       if (explicitOutputKey) {
-        keys.add(explicitOutputKey);
+        if (isMultiMetric) baseMetrics.forEach((metric) => keys.add(`${explicitOutputKey}_${metric}`));
+        else keys.add(explicitOutputKey);
       }
 
       const dimensions = Array.isArray(node?.data?.dimensions)
@@ -77,13 +84,13 @@ function WorkflowBuilderContent({
       const firstDimension = typeof dimensions[0] === 'string' ? dimensions[0].trim() : '';
       if (!firstDimension) return;
 
-      keys.add(
+      baseMetrics.forEach((metric) => keys.add(
         buildDefaultBreakdownOutputKey({
-          baseMetric: node?.data?.base_metric,
+          baseMetric: metric,
           dimension: firstDimension,
           filterMode: node?.data?.filter_mode || 'drop',
         })
-      );
+      ));
 
       // Backward compatibility: older workflows may still reference plain dimension keys.
       keys.add(firstDimension);
@@ -98,8 +105,28 @@ function WorkflowBuilderContent({
       const { nodes: flowNodes, edges: flowEdges } = jsonToGraph(initialData);
       setNodes(flowNodes);
       setEdges(flowEdges);
+      setHasUnsavedChanges(false);
     }
   }, [initialData, setNodes, setEdges]);
+
+  const onNodesChange = useCallback((changes) => {
+    if (changes.some((change) => change.type === 'remove')) {
+      setHasUnsavedChanges(true);
+    }
+    applyNodesChange(changes);
+  }, [applyNodesChange]);
+
+  const onEdgesChange = useCallback((changes) => {
+    if (changes.some((change) => change.type === 'remove')) {
+      setHasUnsavedChanges(true);
+    }
+    applyEdgesChange(changes);
+  }, [applyEdgesChange]);
+
+  const handleAddNode = useCallback((updateNodes) => {
+    setHasUnsavedChanges(true);
+    setNodes(updateNodes);
+  }, [setNodes]);
 
   const onConnect = useCallback(
     (params) => {
@@ -140,6 +167,7 @@ function WorkflowBuilderContent({
         // For now, if source is composite and target is not 'final', we might assume...)
         
         setEdges((eds) => addEdge(newEdge, eds));
+        setHasUnsavedChanges(true);
     },
     [setEdges, nodes],
   );
@@ -149,6 +177,7 @@ function WorkflowBuilderContent({
   }, []);
 
   const handleNodeUpdate = (id, newData) => {
+    setHasUnsavedChanges(true);
     setNodes((nds) => {
       const oldNode = nds.find(n => n.id === id);
       
@@ -186,6 +215,7 @@ function WorkflowBuilderContent({
   };
 
   const handleNodeDelete = (id) => {
+      setHasUnsavedChanges(true);
       setNodes((nds) => nds.filter((n) => n.id !== id));
       setEdges((eds) => eds.filter((e) => e.source !== id && e.target !== id));
       setSelectedNode(null);
@@ -284,6 +314,7 @@ function WorkflowBuilderContent({
 
         setNodes(finalNodes);
         setEdges(finalEdges);
+        setHasUnsavedChanges(true);
         requestAnimationFrame(() => {
           fitView({ padding: 0.2, duration: 250 });
         });
@@ -325,10 +356,31 @@ function WorkflowBuilderContent({
         return;
       }
       // Validate or cleanup
-      await onSave(workflowJson);
+      const saved = await onSave(workflowJson);
+      if (saved) {
+        setHasUnsavedChanges(false);
+      }
+      return Boolean(saved);
     } catch (error) {
       console.error(error);
       toast.error('Failed to generate workflow JSON');
+      return false;
+    }
+  };
+
+  const handleBack = () => {
+    if (hasUnsavedChanges) {
+      setShowUnsavedChangesDialog(true);
+      return;
+    }
+    onBack();
+  };
+
+  const handleSaveAndBack = async () => {
+    const saved = await handleSave();
+    if (saved) {
+      setShowUnsavedChangesDialog(false);
+      onBack();
     }
   };
 
@@ -344,7 +396,7 @@ function WorkflowBuilderContent({
       <div className="bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between">
         <div className="flex items-center gap-4">
           <button 
-            onClick={onBack}
+            onClick={handleBack}
             className="p-2 hover:bg-gray-100 rounded-full text-gray-500"
           >
             <ArrowLeft className="w-5 h-5" />
@@ -354,7 +406,10 @@ function WorkflowBuilderContent({
               <input
                 className="text-lg font-semibold text-gray-900 border border-transparent focus:border-gray-300 rounded px-2 py-1 min-w-[180px]"
                 value={metadata.name || ''}
-                onChange={(e) => setMetadata((m) => ({ ...m, name: e.target.value }))}
+                onChange={(e) => {
+                  setMetadata((m) => ({ ...m, name: e.target.value }));
+                  setHasUnsavedChanges(true);
+                }}
                 placeholder="Workflow Name"
               />
               <span className="text-xs text-gray-500">Visual Editor</span>
@@ -365,7 +420,10 @@ function WorkflowBuilderContent({
             <input
               className="mt-1 text-xs text-gray-700 border border-gray-200 rounded px-2 py-1 w-full max-w-md"
               value={metadata.description || ''}
-              onChange={(e) => setMetadata((m) => ({ ...m, description: e.target.value }))}
+              onChange={(e) => {
+                setMetadata((m) => ({ ...m, description: e.target.value }));
+                setHasUnsavedChanges(true);
+              }}
               placeholder="Description"
             />
           </div>
@@ -483,7 +541,7 @@ function WorkflowBuilderContent({
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
             onNodeClick={onNodeClick}
-            setNodes={setNodes}
+            setNodes={handleAddNode}
           />
         </div>
 
@@ -500,6 +558,42 @@ function WorkflowBuilderContent({
           />
         )}
       </div>
+
+      {showUnsavedChangesDialog && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 p-4">
+          <div
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="unsaved-changes-title"
+            aria-describedby="unsaved-changes-description"
+            className="w-full max-w-md rounded-lg bg-white p-6 shadow-xl"
+          >
+            <h2 id="unsaved-changes-title" className="text-lg font-semibold text-gray-900">
+              Unsaved changes
+            </h2>
+            <p id="unsaved-changes-description" className="mt-2 text-sm text-gray-600">
+              Your changes have not been saved. Save them before leaving this screen?
+            </p>
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setShowUnsavedChangesDialog(false)}
+                className="rounded border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveAndBack}
+                disabled={isSaving}
+                className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isSaving ? 'Saving...' : 'Save'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

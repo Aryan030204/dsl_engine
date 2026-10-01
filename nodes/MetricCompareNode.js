@@ -2,6 +2,8 @@ const queryBuilder = require('../sql/QueryBuilder');
 const queryExecutor = require('../sql/QueryExecutor');
 
 async function MetricCompareNode(def, context) {
+  const requestedMetrics = new Set(Array.isArray(def.metrics) ? def.metrics : []);
+  const needsRates = requestedMetrics.has('cvr') || requestedMetrics.has('atc_rate');
   const { window, baselineWindow, tenantId, timezone } = context.meta || {};
 
   // --- 1. Build query specs (intent only) ---
@@ -34,7 +36,13 @@ async function MetricCompareNode(def, context) {
     current_sessions,
     baseline_sessions,
     current_atc_sessions,
-    baseline_atc_sessions
+    baseline_atc_sessions,
+    current_cod_orders,
+    baseline_cod_orders,
+    current_ppcod_orders,
+    baseline_ppcod_orders,
+    current_prepaid_orders,
+    baseline_prepaid_orders
   } = row;
 
   const currentOrdersNum = Number(current_orders);
@@ -43,11 +51,17 @@ async function MetricCompareNode(def, context) {
   const baselineSessionsNum = Number(baseline_sessions);
   const currentAtcSessionsNum = Number(current_atc_sessions);
   const baselineAtcSessionsNum = Number(baseline_atc_sessions);
+  const currentCodOrdersNum = Number(current_cod_orders);
+  const baselineCodOrdersNum = Number(baseline_cod_orders);
+  const currentPpcodOrdersNum = Number(current_ppcod_orders);
+  const baselinePpcodOrdersNum = Number(baseline_ppcod_orders);
+  const currentPrepaidOrdersNum = Number(current_prepaid_orders);
+  const baselinePrepaidOrdersNum = Number(baseline_prepaid_orders);
 
-  if (
+  if (needsRates && (
     baselineSessionsNum === 0 ||
     currentSessionsNum === 0
-  ) {
+  )) {
     return {
       status: 'fail',
       reason: 'MetricCompareNode: Sessions count is zero, cannot compute CVR'
@@ -55,11 +69,11 @@ async function MetricCompareNode(def, context) {
   }
 
   // --- 4. Derive metrics (pure math, deterministic) ---
-  const current_cvr = currentOrdersNum / currentSessionsNum;
-  const baseline_cvr = baselineOrdersNum / baselineSessionsNum;
+  const current_cvr = currentSessionsNum === 0 ? null : currentOrdersNum / currentSessionsNum;
+  const baseline_cvr = baselineSessionsNum === 0 ? null : baselineOrdersNum / baselineSessionsNum;
 
-  const current_atc_rate = currentAtcSessionsNum / currentSessionsNum;
-  const baseline_atc_rate = baselineAtcSessionsNum / baselineSessionsNum;
+  const current_atc_rate = currentSessionsNum === 0 ? null : currentAtcSessionsNum / currentSessionsNum;
+  const baseline_atc_rate = baselineSessionsNum === 0 ? null : baselineAtcSessionsNum / baselineSessionsNum;
 
   const orders_delta_pct =
     baselineOrdersNum === 0
@@ -77,14 +91,24 @@ async function MetricCompareNode(def, context) {
       : ((currentAtcSessionsNum - baselineAtcSessionsNum) / baselineAtcSessionsNum) * 100;
 
   const cvr_delta_pct =
-    baseline_cvr === 0
+    baseline_cvr == null || baseline_cvr === 0
       ? null
       : ((current_cvr - baseline_cvr) / baseline_cvr) * 100;
 
   const atc_rate_delta_pct =
-    baseline_atc_rate === 0
+    baseline_atc_rate == null || baseline_atc_rate === 0
       ? null
       : ((current_atc_rate - baseline_atc_rate) / baseline_atc_rate) * 100;
+
+  const cod_orders_delta_pct = baselineCodOrdersNum === 0
+    ? null
+    : ((currentCodOrdersNum - baselineCodOrdersNum) / baselineCodOrdersNum) * 100;
+  const ppcod_orders_delta_pct = baselinePpcodOrdersNum === 0
+    ? null
+    : ((currentPpcodOrdersNum - baselinePpcodOrdersNum) / baselinePpcodOrdersNum) * 100;
+  const prepaid_orders_delta_pct = baselinePrepaidOrdersNum === 0
+    ? null
+    : ((currentPrepaidOrdersNum - baselinePrepaidOrdersNum) / baselinePrepaidOrdersNum) * 100;
 
   // Sales metrics only exist when the node asked for 'sales' or 'aov' (see
   // metricQuery's includeSales). AOV = total sales / orders, both taken from
@@ -103,6 +127,12 @@ async function MetricCompareNode(def, context) {
         baseline_sessions: baselineSessionsNum,
         current_atc_sessions: currentAtcSessionsNum,
         baseline_atc_sessions: baselineAtcSessionsNum,
+        current_cod_orders: currentCodOrdersNum,
+        baseline_cod_orders: baselineCodOrdersNum,
+        current_ppcod_orders: currentPpcodOrdersNum,
+        baseline_ppcod_orders: baselinePpcodOrdersNum,
+        current_prepaid_orders: currentPrepaidOrdersNum,
+        baseline_prepaid_orders: baselinePrepaidOrdersNum,
 
         // derived
         current_cvr,
@@ -116,7 +146,9 @@ async function MetricCompareNode(def, context) {
         atc_sessions_delta_pct,
         cvr_delta_pct,
         atc_rate_delta_pct,
-
+        cod_orders_delta_pct,
+        ppcod_orders_delta_pct,
+        prepaid_orders_delta_pct,
         ...salesMetrics
       }
     },

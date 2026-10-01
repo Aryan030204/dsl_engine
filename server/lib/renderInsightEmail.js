@@ -54,7 +54,7 @@ function parseMetricSegment(segment) {
   const metricMatch = normalized.match(/^([^\d+-]*?)([+-]?\d.*)$/);
   const label = metricMatch?.[1]?.trim() || '';
   const rawValue = metricMatch?.[2]?.trim() || normalized;
-  const deltaMatch = rawValue.match(/^(.*?)\s+\((?:change\s+)?([+-]?\d+(?:\.\d+)?%)\)$/i);
+  const deltaMatch = rawValue.match(/^(.*?)\s+\((?:(?:change|increase|drop|decrease|no change)\s+)?([+-]?\d+(?:\.\d+)?%)\)$/i);
 
   if (!deltaMatch) {
     return { label, value: rawValue, delta: null, deltaValue: null };

@@ -104,6 +104,27 @@ test('legacy insight renderer retains tenant-prefixed subjects', () => {
   assert.equal(rendered.subject, 'T1: Alert');
 });
 
+test('insight email colors payment increases, drops, and zero changes consistently', () => {
+  const rendered = renderInsightEmail({
+    insight: {
+      summary: 'Payment mode changes',
+      details: [{
+        title: 'UTM Source',
+        items: [
+          '1. google | COD orders 15 -> 33 (increase 120.00%) | PPCOD orders 10 -> 10 (no change 0.00%) | Prepaid orders 47 -> 20 (drop -57.45%)'
+        ]
+      }]
+    },
+    tenantId: 'T1'
+  });
+
+  assert.match(rendered.html, /color:#047857 !important/);
+  assert.match(rendered.html, /color:#b91c1c !important/);
+  assert.match(rendered.html, /color:#475569 !important/);
+  assert.match(rendered.html, /\+120\.00%/);
+  assert.match(rendered.html, /-57\.45%/);
+});
+
 test('legacy insight nodes with inline email remain valid', () => {
   const workflow = workflowWithEmail({
     id: 'insight', type: 'insight', template: { summary: 'Legacy insight', details: [] },

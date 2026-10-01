@@ -1,4 +1,6 @@
 const { renderEmail } = require('../server/lib/renderEmail');
+const { renderTelegramImages } = require('../server/lib/renderTelegramImage');
+const { resolveBinding } = require('../server/lib/emailBindings');
 const { sendEmail } = require('../server/services/emailService');
 const { sendTelegram } = require('../server/services/telegramService');
 
@@ -36,12 +38,39 @@ async function MessagingNode(def, context, runtime = {}) {
   }
   if (telegramEnabled) {
     const telegramSender = runtime.telegramSender || sendTelegram;
+    const severity = def.telegram?.severity || 'info';
+    const insightBinding = def.format === 'insight'
+      ? resolveBinding(context, def.template?.insightSource || 'scratch.finalInsight')
+      : null;
+    // Report pages rendered as images (server/lib/renderTelegramImage.js). The text
+    // version always goes along too, so a page that can't be rendered (e.g. a report
+    // over the renderer's row limit) degrades to a text alert instead of failing
+    // the run.
+    let images;
+    let imageError = null;
+    try {
+      images = await renderTelegramImages({
+        title: rendered.subject,
+        message: rendered.text,
+        insight: insightBinding?.value,
+        reportViewModel: rendered.viewModel,
+        brandName: context?.meta?.brandName,
+        workflowName: context?.meta?.workflowName,
+        severity
+      });
+    } catch (error) {
+      imageError = error.message;
+    }
     deliveries.telegram = await telegramSender({
       title: rendered.subject,
       message: rendered.text,
-      severity: def.telegram?.severity || 'info',
+      ...(images && images.length ? { images } : {}),
+      severity,
       users: def.telegram?.users || []
     });
+    if (imageError && deliveries.telegram) {
+      deliveries.telegram = { ...deliveries.telegram, imageFallback: imageError };
+    }
   }
 
   // 'deferred': a state-engine workflow captured this send (server/lib/

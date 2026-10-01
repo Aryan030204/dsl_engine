@@ -1,0 +1,20 @@
+{
+  "watch": [
+    "server.js",
+    "server",
+    "engine",
+    "nodes",
+    "lib",
+    "scheduler",
+    "sql"
+  ],
+  "ignore": [
+    "ui/**",
+    "tests/**",
+    "docs/**",
+    "workflows/**",
+    "node_modules/**",
+    "ui/dist/**"
+  ],
+  "delay": 500
+}

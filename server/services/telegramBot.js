@@ -61,6 +61,35 @@ async function sendToUsers(users, text) {
 }
 
 /**
+ * Sends one photo to each user's chat, per-user success/failure like sendToUsers.
+ * photo: { data: Buffer|Uint8Array, filename, contentType }; caption: plain text.
+ */
+async function sendPhotoToUsers(users, { photo, caption }) {
+  const { InputFile } = require('node-telegram-bot-api');
+  const client = getApi();
+  const results = await Promise.allSettled(
+    users.map((user) => client.sendPhoto({
+      chat_id: user.telegramChatId,
+      // A fresh InputFile per send: each upload is its own multipart request.
+      photo: new InputFile(photo.data, { filename: photo.filename, contentType: photo.contentType }),
+      ...(caption ? { caption } : {})
+    }))
+  );
+  return results.map((result, index) => {
+    const user = users[index];
+    if (result.status === 'fulfilled') {
+      return { telegramChatId: user.telegramChatId, username: user.username, success: true };
+    }
+    return {
+      telegramChatId: user.telegramChatId,
+      username: user.username,
+      success: false,
+      error: result.reason?.message || String(result.reason)
+    };
+  });
+}
+
+/**
  * Chat ids for the given users: a raw telegramChatId is used as-is, a username is
  * looked up among linked users. Unlinked usernames come back with a null chat id.
  */
@@ -170,6 +199,7 @@ module.exports = {
   isTelegramConfigured,
   getBotUsername,
   sendToUsers,
+  sendPhotoToUsers,
   resolveChatIds,
   createLink,
   startLinkBot,

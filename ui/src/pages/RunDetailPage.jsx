@@ -7,6 +7,67 @@ import InsightDetail from '../components/InsightDetail';
 import { RunStateDecisionCard } from '../components/StateEngineViews';
 import { useState } from 'react';
 
+const formatFieldLabel = (key) => String(key)
+  .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+  .replace(/[_-]+/g, ' ')
+  .replace(/\b\w/g, (letter) => letter.toUpperCase());
+
+function StructuredValue({ value, depth = 0 }) {
+  if (value === null || value === undefined) {
+    return <span className="text-gray-400">-</span>;
+  }
+
+  if (Array.isArray(value)) {
+    if (!value.length) return <span className="text-gray-400">No items</span>;
+    return (
+      <div className="space-y-2">
+        {value.map((item, index) => (
+          <div key={index} className="rounded-md border border-gray-200 bg-white p-3">
+            {typeof item === 'object' && item !== null && !Array.isArray(item) && (
+              <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">
+                Item {index + 1}
+              </div>
+            )}
+            <StructuredValue value={item} depth={depth + 1} />
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  if (typeof value === 'object') {
+    const entries = Object.entries(value);
+    if (!entries.length) return <span className="text-gray-400">No data</span>;
+    if (depth >= 5) {
+      return <pre className="overflow-auto whitespace-pre-wrap break-words text-xs">{JSON.stringify(value, null, 2)}</pre>;
+    }
+    return (
+      <dl className="grid grid-cols-1 gap-3 md:grid-cols-2">
+        {entries.map(([key, item]) => (
+          <div key={key} className="min-w-0 rounded-md bg-gray-50 p-3">
+            <dt className="mb-1 text-xs font-medium uppercase tracking-wide text-gray-500">
+              {formatFieldLabel(key)}
+            </dt>
+            <dd className="break-words text-sm text-gray-900">
+              <StructuredValue value={item} depth={depth + 1} />
+            </dd>
+          </div>
+        ))}
+      </dl>
+    );
+  }
+
+  if (typeof value === 'boolean') {
+    return (
+      <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${value ? 'bg-green-100 text-green-700' : 'bg-gray-200 text-gray-700'}`}>
+        {value ? 'Yes' : 'No'}
+      </span>
+    );
+  }
+
+  return <span className="whitespace-pre-wrap break-words">{String(value)}</span>;
+}
+
 export default function RunDetailPage() {
   const { workflowId, runId } = useParams();
   const { data: run, isLoading, error } = useRun(workflowId, runId);
@@ -156,6 +217,18 @@ export default function RunDetailPage() {
       .filter(Boolean)
       .at(-1)
     || null;
+  const metricGroups = Object.entries(run?.metrics || {}).reduce((groups, [key, value]) => {
+    const normalizedKey = key.toLowerCase();
+    const group = normalizedKey.includes('order')
+      ? 'Orders'
+      : normalizedKey.includes('session')
+        ? 'Sessions and activity'
+        : normalizedKey.includes('cvr') || normalizedKey.includes('rate')
+          ? 'Conversion rates'
+          : 'Breakdowns and other metrics';
+    (groups[group] ||= []).push([key, value]);
+    return groups;
+  }, {});
 
   return (
     <div>
@@ -182,40 +255,66 @@ export default function RunDetailPage() {
         </Badge>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <Card className="mb-6">
+        <CardHeader>
+          <CardTitle>Execution Summary</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <dl className="grid grid-cols-2 gap-4 md:grid-cols-4">
+            <div>
+              <dt className="text-sm text-gray-500">Workflow</dt>
+              <dd className="font-medium">{workflowId}</dd>
+            </div>
+            <div>
+              <dt className="text-sm text-gray-500">Version</dt>
+              <dd className="font-medium">v{run?.version}</dd>
+            </div>
+            <div>
+              <dt className="text-sm text-gray-500">Duration</dt>
+              <dd className="font-medium">{getDuration()}</dd>
+            </div>
+            <div>
+              <dt className="text-sm text-gray-500">Started</dt>
+              <dd className="font-medium">
+                {run?.startedAt ? format(new Date(run.startedAt), 'HH:mm:ss') : '-'}
+              </dd>
+            </div>
+          </dl>
+        </CardContent>
+      </Card>
+
+      {Object.keys(metricGroups).length > 0 && (
+        <Card className="mb-6">
+          <CardHeader>
+            <CardTitle>Run Metrics</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            {Object.entries(metricGroups).map(([group, entries]) => (
+              <section key={group}>
+                <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-gray-500">
+                  {group}
+                </h2>
+                <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                  {entries.map(([key, value]) => (
+                    <div key={key} className="min-w-0 rounded-lg border border-gray-200 bg-gray-50 p-4">
+                      <dt className="mb-2 text-xs font-medium uppercase tracking-wide text-gray-500">
+                        {formatFieldLabel(key)}
+                      </dt>
+                      <dd className="break-words text-sm font-semibold text-gray-900">
+                        {formatMetricValue(key, value)}
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
+              </section>
+            ))}
+          </CardContent>
+        </Card>
+      )}
+
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         {/* Main Content */}
         <div className="lg:col-span-2 space-y-6">
-          {/* Summary Card */}
-          <Card>
-            <CardHeader>
-              <CardTitle>Execution Summary</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <dl className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <div>
-                  <dt className="text-sm text-gray-500">Workflow</dt>
-                  <dd className="font-medium">{workflowId}</dd>
-                </div>
-                <div>
-                  <dt className="text-sm text-gray-500">Version</dt>
-                  <dd className="font-medium">v{run?.version}</dd>
-                </div>
-                <div>
-                  <dt className="text-sm text-gray-500">Duration</dt>
-                  <dd className="font-medium">{getDuration()}</dd>
-                </div>
-                <div>
-                  <dt className="text-sm text-gray-500">Started</dt>
-                  <dd className="font-medium">
-                    {run?.startedAt
-                      ? format(new Date(run.startedAt), 'HH:mm:ss')
-                      : '-'}
-                  </dd>
-                </div>
-              </dl>
-            </CardContent>
-          </Card>
-
           <RunStateDecisionCard run={run} />
 
           {/* Execution Trace */}
@@ -280,9 +379,7 @@ export default function RunDetailPage() {
                       </button>
                       {expandedNodes[`output-${idx}`] && (
                         <div className="p-3 border-t border-gray-200 bg-gray-50">
-                          <pre className="text-xs overflow-auto max-h-64">
-                            {JSON.stringify(output, null, 2)}
-                          </pre>
+                          <StructuredValue value={output} />
                         </div>
                       )}
                     </div>
@@ -295,27 +392,6 @@ export default function RunDetailPage() {
 
         {/* Sidebar */}
         <div className="space-y-6">
-          {/* Metrics */}
-          {run?.metrics && Object.keys(run.metrics).length > 0 && (
-            <Card>
-              <CardHeader>
-                <CardTitle>Metrics</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <dl className="space-y-2">
-                  {Object.entries(run.metrics).map(([key, value]) => (
-                    <div key={key} className="flex justify-between gap-4">
-                      <dt className="text-sm text-gray-500">{key}</dt>
-                      <dd className="font-medium text-sm text-right break-words">
-                        {formatMetricValue(key, value)}
-                      </dd>
-                    </div>
-                  ))}
-                </dl>
-              </CardContent>
-            </Card>
-          )}
-
           {/* Context - Meta */}
           {run?.context?.meta && (
             <Card>

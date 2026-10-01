@@ -18,6 +18,59 @@ const ALLOWED_DIMENSIONS = new Set([
   'landing_page_type',
   'referrer_name'
 ]);
+const PAYMENT_BREAKDOWN_DIMENSIONS = new Set([
+  'product_id',
+  'utm_source',
+  'utm_campaign',
+  'utm_medium'
+]);
+
+function buildPaymentOrderCtes({ dimension, filterSql, notNullSql, timestampMode }) {
+  const timePredicate = timestampMode === 'hourly'
+    ? `COALESCE(
+        created_at,
+        STR_TO_DATE(CONCAT(created_date, ' ', created_time), '%Y-%m-%d %H:%i:%s')
+      ) >= ?
+      AND COALESCE(
+        created_at,
+        STR_TO_DATE(CONCAT(created_date, ' ', created_time), '%Y-%m-%d %H:%i:%s')
+      ) <  ?`
+    : 'created_date >= DATE(?) AND created_date < DATE(?)';
+
+  const classifiedCte = (period) => `${period}_payment_classified AS (
+  SELECT
+    ${dimension} AS dimension_value,
+    order_name,
+    CASE
+      WHEN MAX(payment_gateway_names LIKE '%Gokwik PPCOD%') = 1 THEN 'ppcod_orders'
+      WHEN MAX(
+        payment_gateway_names IS NULL
+        OR payment_gateway_names = ''
+        OR payment_gateway_names LIKE '%Cash on Delivery (COD)%'
+        OR payment_gateway_names LIKE '%cash_on_delivery%'
+      ) = 1 THEN 'cod_orders'
+      ELSE 'prepaid_orders'
+    END AS payment_metric
+  FROM shopify_orders
+  WHERE ${timePredicate}
+    AND order_name IS NOT NULL
+    ${filterSql}
+    ${notNullSql}
+  GROUP BY ${dimension}, order_name
+),
+${period}_payment_orders AS (
+  SELECT
+    dimension_value,
+    COALESCE(SUM(payment_metric = 'cod_orders'), 0) AS cod_orders,
+    COALESCE(SUM(payment_metric = 'ppcod_orders'), 0) AS ppcod_orders,
+    COALESCE(SUM(payment_metric = 'prepaid_orders'), 0) AS prepaid_orders
+  FROM ${period}_payment_classified
+  GROUP BY dimension_value
+)`;
+
+  return `${classifiedCte('current')},
+${classifiedCte('baseline')}`;
+}
 
 function assertSafeDimension(dimension) {
   if (!dimension || typeof dimension !== 'string') {
@@ -122,7 +175,7 @@ function buildHourlyProductIdOnlyFilterWhere(filters = []) {
   };
 }
 
-function buildHourlyProductRollupSql({ filterSql, notNullSql, includeOrders }) {
+function buildHourlyProductRollupSql({ filterSql, notNullSql, includeOrders, includePaymentOrders }) {
   return `
 WITH
 current_sessions AS (
@@ -171,6 +224,12 @@ baseline_orders AS (
     ${notNullSql}
   GROUP BY product_id
 ),` : ''}
+${includePaymentOrders ? `${buildPaymentOrderCtes({
+  dimension: 'product_id',
+  filterSql,
+  notNullSql,
+  timestampMode: 'hourly'
+})},` : ''}
 product_titles AS (
   SELECT
     product_id AS dimension_value,
@@ -191,6 +250,11 @@ all_keys AS (
   SELECT dimension_value FROM current_orders
   UNION
   SELECT dimension_value FROM baseline_orders` : ''}
+  ${includePaymentOrders ? `
+  UNION
+  SELECT dimension_value FROM current_payment_orders
+  UNION
+  SELECT dimension_value FROM baseline_payment_orders` : ''}
 )
 SELECT
   k.dimension_value,
@@ -198,12 +262,13 @@ SELECT
   COALESCE(bs.sessions, 0) AS baseline_sessions,
   COALESCE(cs.atc_sessions, 0) AS current_atc_sessions,
   COALESCE(bs.atc_sessions, 0) AS baseline_atc_sessions,
-  ${includeOrders ? 'COALESCE(co.orders, 0) AS current_orders,\n  COALESCE(bo.orders, 0) AS baseline_orders' : '0 AS current_orders,\n  0 AS baseline_orders'},
+  ${includeOrders ? 'COALESCE(co.orders, 0) AS current_orders,\n  COALESCE(bo.orders, 0) AS baseline_orders' : '0 AS current_orders,\n  0 AS baseline_orders'}${includePaymentOrders ? ',\n  COALESCE(cpo.cod_orders, 0) AS current_cod_orders,\n  COALESCE(bpo.cod_orders, 0) AS baseline_cod_orders,\n  COALESCE(cpo.ppcod_orders, 0) AS current_ppcod_orders,\n  COALESCE(bpo.ppcod_orders, 0) AS baseline_ppcod_orders,\n  COALESCE(cpo.prepaid_orders, 0) AS current_prepaid_orders,\n  COALESCE(bpo.prepaid_orders, 0) AS baseline_prepaid_orders' : ''},
   pt.product_title
 FROM all_keys k
 LEFT JOIN current_sessions cs ON cs.dimension_value = k.dimension_value
 LEFT JOIN baseline_sessions bs ON bs.dimension_value = k.dimension_value
 ${includeOrders ? 'LEFT JOIN current_orders co ON co.dimension_value = k.dimension_value\nLEFT JOIN baseline_orders bo ON bo.dimension_value = k.dimension_value' : ''}
+${includePaymentOrders ? 'LEFT JOIN current_payment_orders cpo ON cpo.dimension_value = k.dimension_value\nLEFT JOIN baseline_payment_orders bpo ON bpo.dimension_value = k.dimension_value' : ''}
 LEFT JOIN product_titles pt ON pt.dimension_value = k.dimension_value
 ORDER BY current_sessions DESC;
   `;
@@ -357,7 +422,7 @@ ORDER BY current_sessions DESC;
   `;
 }
 
-function buildDefaultDimensionSql({ dimension, filterSql, notNullSql, includeOrders, includeProductTitle }) {
+function buildDefaultDimensionSql({ dimension, filterSql, notNullSql, includeOrders, includePaymentOrders, includeProductTitle }) {
   return `
 WITH
 current_sessions AS (
@@ -404,6 +469,12 @@ baseline_orders AS (
     ${filterSql}
   GROUP BY ${dimension}
 ),` : ''}
+${includePaymentOrders ? `${buildPaymentOrderCtes({
+  dimension,
+  filterSql,
+  notNullSql,
+  timestampMode: 'daily'
+})},` : ''}
 ${includeProductTitle ? `product_titles AS (
   SELECT
     product_id AS dimension_value,
@@ -424,6 +495,11 @@ all_keys AS (
   SELECT dimension_value FROM current_orders
   UNION
   SELECT dimension_value FROM baseline_orders` : ''}
+  ${includePaymentOrders ? `
+  UNION
+  SELECT dimension_value FROM current_payment_orders
+  UNION
+  SELECT dimension_value FROM baseline_payment_orders` : ''}
 )
 SELECT
   k.dimension_value,
@@ -431,11 +507,12 @@ SELECT
   COALESCE(bs.sessions, 0) AS baseline_sessions,
   COALESCE(cs.atc_sessions, 0) AS current_atc_sessions,
   COALESCE(bs.atc_sessions, 0) AS baseline_atc_sessions,
-  ${includeOrders ? 'COALESCE(co.orders, 0) AS current_orders,\n  COALESCE(bo.orders, 0) AS baseline_orders' : '0 AS current_orders,\n  0 AS baseline_orders'}${includeProductTitle ? ',\n  pt.product_title' : ''}
+  ${includeOrders ? 'COALESCE(co.orders, 0) AS current_orders,\n  COALESCE(bo.orders, 0) AS baseline_orders' : '0 AS current_orders,\n  0 AS baseline_orders'}${includePaymentOrders ? ',\n  COALESCE(cpo.cod_orders, 0) AS current_cod_orders,\n  COALESCE(bpo.cod_orders, 0) AS baseline_cod_orders,\n  COALESCE(cpo.ppcod_orders, 0) AS current_ppcod_orders,\n  COALESCE(bpo.ppcod_orders, 0) AS baseline_ppcod_orders,\n  COALESCE(cpo.prepaid_orders, 0) AS current_prepaid_orders,\n  COALESCE(bpo.prepaid_orders, 0) AS baseline_prepaid_orders' : ''}${includeProductTitle ? ',\n  pt.product_title' : ''}
 FROM all_keys k
 LEFT JOIN current_sessions cs ON cs.dimension_value = k.dimension_value
 LEFT JOIN baseline_sessions bs ON bs.dimension_value = k.dimension_value
 ${includeOrders ? 'LEFT JOIN current_orders co ON co.dimension_value = k.dimension_value\nLEFT JOIN baseline_orders bo ON bo.dimension_value = k.dimension_value' : ''}
+${includePaymentOrders ? 'LEFT JOIN current_payment_orders cpo ON cpo.dimension_value = k.dimension_value\nLEFT JOIN baseline_payment_orders bpo ON bpo.dimension_value = k.dimension_value' : ''}
 ${includeProductTitle ? 'LEFT JOIN product_titles pt ON pt.dimension_value = k.dimension_value' : ''}
 ORDER BY current_sessions DESC;
   `;
@@ -448,13 +525,17 @@ module.exports = function dimensionBreakdownQuery({
   baselineWindow,
   timezone,
   filters = [],
-  includeOrders = true
+  includeOrders = true,
+  includePaymentOrders = false
 }) {
   if (!tenantId) throw new Error('dimensionBreakdownQuery: tenantId is required (db selector)');
   if (!window?.start || !window?.end) throw new Error('dimensionBreakdownQuery: window.start/window.end required');
   if (!baselineWindow?.start || !baselineWindow?.end) throw new Error('dimensionBreakdownQuery: baselineWindow.start/window.end required');
 
   assertSafeDimension(dimension);
+  if (includePaymentOrders && !PAYMENT_BREAKDOWN_DIMENSIONS.has(dimension)) {
+    throw new Error(`dimensionBreakdownQuery: payment order breakdown does not support dimension "${dimension}"`);
+  }
 
   const normalizedWindow = normalizeWindowForQuery(window, timezone);
   const normalizedBaselineWindow = normalizeWindowForQuery(baselineWindow, timezone);
@@ -484,10 +565,10 @@ module.exports = function dimensionBreakdownQuery({
   const titleEnd = windowEnd;
 
   const sql = useHourlyProductRollup
-    ? buildHourlyProductRollupSql({ filterSql, notNullSql, includeOrders })
+    ? buildHourlyProductRollupSql({ filterSql, notNullSql, includeOrders, includePaymentOrders })
     : useHourlyLandingPagePathAttribution
       ? buildHourlyLandingPagePathSql({ filterSql, includeOrders })
-      : buildDefaultDimensionSql({ dimension, filterSql, notNullSql, includeOrders, includeProductTitle });
+      : buildDefaultDimensionSql({ dimension, filterSql, notNullSql, includeOrders, includePaymentOrders, includeProductTitle });
 
   const params = useHourlyProductRollup ? [
     windowStart, windowEnd,
@@ -500,6 +581,13 @@ module.exports = function dimensionBreakdownQuery({
       windowStart, windowEnd,
       ...filterParams,
 
+      baselineStart, baselineEnd,
+      ...filterParams
+    ] : []),
+
+    ...(includePaymentOrders ? [
+      windowStart, windowEnd,
+      ...filterParams,
       baselineStart, baselineEnd,
       ...filterParams
     ] : []),
@@ -530,6 +618,12 @@ module.exports = function dimensionBreakdownQuery({
     ...filterParams,
 
     ...(includeOrders ? [
+      windowStart, windowEnd,
+      ...filterParams,
+      baselineStart, baselineEnd,
+      ...filterParams
+    ] : []),
+    ...(includePaymentOrders ? [
       windowStart, windowEnd,
       ...filterParams,
       baselineStart, baselineEnd,

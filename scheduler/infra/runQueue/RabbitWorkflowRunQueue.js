@@ -39,7 +39,7 @@ class RabbitWorkflowRunQueue {
     }
 
     const amqp = await this._loadAmqp();
-    this.connection = await amqp.connect(this.options.url);
+    this.connection = await amqp.connect(this.options.url, { timeout: 5000 });
     this.channel = await this.connection.createChannel();
     await this.channel.assertExchange(this.options.exchange, 'direct', { durable: true });
     await this.channel.assertQueue(this.options.queue, { durable: true });

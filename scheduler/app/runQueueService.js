@@ -82,11 +82,13 @@ async function enqueueRun(params) {
 
   if (status === 'queued' && useRabbitRunQueue()) {
     console.log(`[run-queue] dispatching run=${run._id} via rabbit exchange=${process.env.RABBITMQ_RUN_EXCHANGE || 'scheduler.runs'} routingKey=${process.env.RABBITMQ_RUN_ROUTING_KEY || 'workflow.run'}`);
-    await getRabbitWorkflowRunQueue().publishRun(run._id, {
-      triggerType,
-      tenantId,
-      workflowId
-    });
+    void getRabbitWorkflowRunQueue().publishRun(run._id, {
+        triggerType,
+        tenantId,
+        workflowId
+      }).catch((error) => {
+        console.error(`[run-queue] rabbit dispatch failed; run remains queued for Mongo polling error=${error.message}`);
+      });
   }
 
   return {
