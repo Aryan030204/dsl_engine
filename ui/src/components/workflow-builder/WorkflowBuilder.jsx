@@ -229,6 +229,83 @@ function WorkflowBuilderContent({
       setSelectedNode(null);
   };
 
+  const handleImportNode = useCallback((sourceNode, sourceWorkflow, sourceDefinition) => {
+    if (!sourceNode?.id || !sourceNode?.type) {
+      toast.error('This workflow node is missing its ID or type');
+      return;
+    }
+
+    const usedIds = new Set(nodes.flatMap((node) => [node.id, node.data?.id].filter(Boolean)));
+    const sourceNodes = Array.isArray(sourceDefinition?.nodes) ? sourceDefinition.nodes : [];
+    const definitionsToCopy = [sourceNode];
+
+    if (sourceNode.type === 'composite') {
+      const stepIds = Array.isArray(sourceNode.steps) ? sourceNode.steps : [];
+      const stepNodes = stepIds.map((stepId) => sourceNodes.find((node) => node.id === stepId));
+      if (!stepIds.length || stepNodes.some((node) => !node)) {
+        toast.error('This composite has missing step nodes and cannot be copied safely');
+        return;
+      }
+      if (stepNodes.some((node) => node.type === 'composite')) {
+        toast.error('Nested composites cannot currently be copied');
+        return;
+      }
+      definitionsToCopy.push(...stepNodes);
+    }
+
+    const idMap = new Map();
+    definitionsToCopy.forEach((definition) => {
+      const baseId = `import_${sanitizeIdSegment(definition.id)}`;
+      idMap.set(definition.id, getUniqueNodeId(baseId, usedIds));
+    });
+
+    const copiedDefinitions = definitionsToCopy.map((definition) => {
+      const copied = JSON.parse(JSON.stringify(definition));
+      copied.id = idMap.get(definition.id);
+      delete copied.next;
+
+      // Keep branch conditions, but drop paths that point back into the source workflow.
+      if (copied.type === 'branch') {
+        copied.rules = (copied.rules || []).map((rule, index) => {
+          const { then, ...ruleConfig } = rule;
+          return { ...ruleConfig, _ruleId: `imported_rule_${Date.now()}_${index}` };
+        });
+        if (copied.default) {
+          const { then, ...defaultConfig } = copied.default;
+          copied.default = defaultConfig;
+        }
+      }
+      if (copied.type === 'composite') {
+        copied.steps = copied.steps.map((stepId) => idMap.get(stepId));
+      }
+      return copied;
+    });
+
+    const { nodes: importedNodes = [] } = jsonToGraph({ nodes: copiedDefinitions });
+    if (importedNodes.length !== copiedDefinitions.length) {
+      toast.error('Could not convert this node for the workflow editor');
+      return;
+    }
+
+    const maxX = nodes.reduce((max, node) => Math.max(max, node.position?.x || 0), 0);
+    const minY = nodes.length
+      ? Math.min(...nodes.map((node) => node.position?.y || 0))
+      : 0;
+    const importedMinX = Math.min(...importedNodes.map((node) => node.position?.x || 0));
+    const importedMinY = Math.min(...importedNodes.map((node) => node.position?.y || 0));
+    const offsetX = maxX + 320 - importedMinX;
+    const offsetY = minY - importedMinY;
+    const positionedNodes = importedNodes.map((node) => ({
+      ...node,
+      position: { x: node.position.x + offsetX, y: node.position.y + offsetY },
+    }));
+    setNodes((current) => [...current, ...positionedNodes]);
+    setHasUnsavedChanges(true);
+    setSelectedNode(positionedNodes.find((node) => node.data.id === idMap.get(sourceNode.id)) || null);
+    requestAnimationFrame(() => fitView({ padding: 0.2, duration: 250 }));
+    toast.success(`Copied “${sourceNode.id}”${positionedNodes.length > 1 ? ' and its steps' : ''} from ${sourceWorkflow?.name || 'workflow'}`);
+  }, [nodes, setNodes, setHasUnsavedChanges, fitView]);
+
   const handleAttachWorkflowToBranchRule = useCallback(
     async ({ branchNodeId, ruleId, workflowId }) => {
       if (!branchNodeId || !ruleId || !workflowId) {
@@ -518,7 +595,11 @@ function WorkflowBuilderContent({
 
       {/* Main Content */}
       <div className="flex-1 flex overflow-hidden">
-        <NodeSidebar />
+        <NodeSidebar
+          workflowImportOptions={workflowImportOptions}
+          currentTenantId={currentTenantId}
+          onImportNode={handleImportNode}
+        />
         
         <div className="flex-1 bg-gray-100 relative h-full w-full">
           <WorkflowCanvas 

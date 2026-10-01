@@ -219,6 +219,20 @@ export const graphToJson = (nodes, edges, initialMetadata) => {
       }
 
       delete backendNode.next; // Branches typically don't have a single next
+    } else if (node.type === 'composite') {
+      const stepEdges = outgoingEdges.filter((edge) => edge.label === 'Step' || edge.id?.startsWith(`${node.id}-step-`));
+      if (stepEdges.length) {
+        backendNode.steps = stepEdges
+          .filter((edge) => idMap.has(edge.target))
+          .map((edge) => idMap.get(edge.target));
+      }
+
+      const nextEdge = outgoingEdges.find((edge) => !stepEdges.includes(edge));
+      if (nextEdge && idMap.has(nextEdge.target)) {
+        backendNode.next = idMap.get(nextEdge.target);
+      } else {
+        delete backendNode.next;
+      }
     } else {
       // Standard nodes
       const nextEdge = outgoingEdges[0]; // Assuming single output for standard nodes
