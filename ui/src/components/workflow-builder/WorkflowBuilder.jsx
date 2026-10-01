@@ -2,6 +2,7 @@ import React, { useCallback, useMemo, useState, useEffect } from 'react';
 import { ReactFlowProvider, useNodesState, useEdgesState, addEdge, MarkerType, useReactFlow } from '@xyflow/react';
 import { ArrowLeft, Save, Layout } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { useUnsavedChangesNavigation } from '../../context/UnsavedChangesContext';
 
 import NodeSidebar from './NodeSidebar';
 import WorkflowCanvas from './WorkflowCanvas';
@@ -51,8 +52,7 @@ function WorkflowBuilderContent({
   const [selectedNode, setSelectedNode] = useState(null);
   const [metadata, setMetadata] = useState(initialData || {});
   const [isAttachingWorkflowRef, setIsAttachingWorkflowRef] = useState(false);
-  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
-  const [showUnsavedChangesDialog, setShowUnsavedChangesDialog] = useState(false);
+  const { hasUnsavedChanges, setHasUnsavedChanges, blocker } = useUnsavedChangesNavigation();
   const workflowImportOptionMap = useMemo(
     () => new Map((workflowImportOptions || []).map((item) => [item.workflowId, item])),
     [workflowImportOptions]
@@ -106,6 +106,16 @@ function WorkflowBuilderContent({
       setHasUnsavedChanges(false);
     }
   }, [initialData, setNodes, setEdges]);
+
+  useEffect(() => {
+    if (!hasUnsavedChanges) return undefined;
+    const warnBeforeUnload = (event) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', warnBeforeUnload);
+    return () => window.removeEventListener('beforeunload', warnBeforeUnload);
+  }, [hasUnsavedChanges]);
 
   const onNodesChange = useCallback((changes) => {
     if (changes.some((change) => change.type === 'remove')) {
@@ -356,19 +366,10 @@ function WorkflowBuilderContent({
     }
   };
 
-  const handleBack = () => {
-    if (hasUnsavedChanges) {
-      setShowUnsavedChangesDialog(true);
-      return;
-    }
-    onBack();
-  };
-
-  const handleSaveAndBack = async () => {
+  const handleSaveAndProceed = async () => {
     const saved = await handleSave();
     if (saved) {
-      setShowUnsavedChangesDialog(false);
-      onBack();
+      blocker.proceed();
     }
   };
 
@@ -384,7 +385,7 @@ function WorkflowBuilderContent({
       <div className="bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between">
         <div className="flex items-center gap-4">
           <button 
-            onClick={handleBack}
+            onClick={onBack}
             className="p-2 hover:bg-gray-100 rounded-full text-gray-500"
           >
             <ArrowLeft className="w-5 h-5" />
@@ -545,7 +546,7 @@ function WorkflowBuilderContent({
         )}
       </div>
 
-      {showUnsavedChangesDialog && (
+      {blocker.state === 'blocked' && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 p-4">
           <div
             role="alertdialog"
@@ -558,19 +559,23 @@ function WorkflowBuilderContent({
               Unsaved changes
             </h2>
             <p id="unsaved-changes-description" className="mt-2 text-sm text-gray-600">
-              Your changes have not been saved. Save them before leaving this screen?
+              Your changes have not been saved. Save them before leaving, or leave without saving.
             </p>
             <div className="mt-6 flex justify-end gap-3">
               <button
                 type="button"
-                onClick={() => setShowUnsavedChangesDialog(false)}
-                className="rounded border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                disabled={isSaving}
+                onClick={() => {
+                  setHasUnsavedChanges(false);
+                  blocker.proceed();
+                }}
+                className="rounded border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                Cancel
+                Leave
               </button>
               <button
                 type="button"
-                onClick={handleSaveAndBack}
+                onClick={handleSaveAndProceed}
                 disabled={isSaving}
                 className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
               >
