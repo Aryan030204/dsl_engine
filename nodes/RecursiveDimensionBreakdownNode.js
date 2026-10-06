@@ -8,6 +8,10 @@ const {
 const PAYMENT_ORDER_METRICS = new Set(['cod_orders', 'ppcod_orders', 'prepaid_orders']);
 
 async function RecursiveDimensionBreakdownNode(def, context) {
+  if (def.analysis_mode === 'inventory') {
+    return runInventoryBreakdown(def, context);
+  }
+
   const selectedMetrics = [...new Set(
     (Array.isArray(def.base_metrics) && def.base_metrics.length
       ? def.base_metrics
@@ -91,6 +95,86 @@ async function RecursiveDimensionBreakdownNode(def, context) {
     delta: {
       metrics: combinedMetrics,
       breakdowns: combinedBreakdowns
+    },
+    next: def.next
+  };
+}
+
+async function runInventoryBreakdown(def, context) {
+  const topK = Math.max(1, Math.min(100, Math.floor(Number(def.inventory_top_k) || 50)));
+  const reportTopK = Math.max(1, Math.min(100, Math.floor(Number(def.inventory_report_top_k) || 2)));
+  const criticalThreshold = Number.isFinite(Number(def.critical_doh_days)) ? Number(def.critical_doh_days) : 7;
+  const healthyThreshold = Number.isFinite(Number(def.healthy_doh_days)) ? Number(def.healthy_doh_days) : 15;
+  const outputKey = normalizeOutputKey(def.output_key) || 'inventory_top_products';
+  if (healthyThreshold <= criticalThreshold) {
+    return { status: 'fail', reason: 'Inventory breakdown: healthy DOH threshold must be greater than critical threshold' };
+  }
+
+  const querySpec = queryBuilder.buildInventoryProductQuery({
+    tenantId: context?.meta?.tenantId,
+    topK
+  });
+  const result = await queryExecutor.execute(querySpec);
+  if (!Array.isArray(result?.rows) || result.rows.length === 0) {
+    return { status: 'fail', reason: 'Inventory breakdown: no inventory rows were found for this brand' };
+  }
+
+  const products = result.rows.map((row) => {
+    const doh = row.doh_7d == null ? null : Number(row.doh_7d);
+    return {
+      product_id: String(row.product_id),
+      product_title: row.product_title || 'Untitled product',
+      sku: row.sku || '—',
+      inventory_available: Number(row.inventory_available || 0),
+      sold_units_7d: Number(row.sold_units_7d || 0),
+      drr_7d: Number(row.drr_7d || 0),
+      doh_7d: doh,
+      status: doh == null ? 'No recent sales'
+        : doh <= criticalThreshold ? 'Critical'
+          : doh < healthyThreshold ? 'Low stock' : 'Healthy',
+      updated_at: row.updated_at
+    };
+  });
+  const critical = products.filter((product) => product.doh_7d != null && product.doh_7d <= criticalThreshold);
+  const medium = products.filter((product) => product.doh_7d != null && product.doh_7d > criticalThreshold && product.doh_7d < healthyThreshold);
+  const healthy = products.filter((product) => product.doh_7d != null && product.doh_7d >= healthyThreshold);
+  const lowest = products
+    .filter((product) => product.doh_7d != null)
+    .sort((a, b) => a.doh_7d - b.doh_7d)
+    .slice(0, reportTopK);
+  const asOf = products.reduce((latest, product) => {
+    const value = product.updated_at ? new Date(product.updated_at) : null;
+    return value && !Number.isNaN(value.getTime()) && (!latest || value > latest) ? value : latest;
+  }, null);
+  const report = {
+    products,
+    lowest_doh_products: lowest,
+    analyzed_count: products.length,
+    critical_count: critical.length,
+    medium_count: medium.length,
+    healthy_count: healthy.length,
+    no_velocity_count: products.length - critical.length - medium.length - healthy.length,
+    critical_threshold_days: criticalThreshold,
+    healthy_threshold_days: healthyThreshold,
+    report_top_k: reportTopK,
+    as_of: asOf?.toISOString() || null
+  };
+
+  return {
+    status: 'pass',
+    delta: {
+      metrics: {
+        inventory_products_analyzed: report.analyzed_count,
+        inventory_critical_products: report.critical_count,
+        inventory_medium_products: report.medium_count,
+        inventory_healthy_products: report.healthy_count,
+        inventory_no_velocity_products: report.no_velocity_count
+      },
+      breakdowns: {
+        [outputKey]: products,
+        [`${outputKey}_lowest_doh`]: lowest
+      },
+      scratch: { ...(context?.scratch || {}), inventoryReport: report }
     },
     next: def.next
   };

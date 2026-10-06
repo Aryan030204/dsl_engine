@@ -36,7 +36,7 @@ const { isSafeBindingPath } = require('../lib/emailBindings');
 const { validateEmailBranding } = require('../lib/emailBranding');
 
 const EMAIL_FORMATS = new Set(['insight', 'report']);
-const REPORT_PRESETS = new Set(['performance_report_v1']);
+const REPORT_PRESETS = new Set(['performance_report_v1', 'inventory_alert_v1']);
 const REPORT_VALUE_FORMATS = new Set(['text', 'integer', 'decimal', 'percent_ratio', 'percent', 'delta_percent']);
 const REPORT_TONES = new Set(['positive', 'negative', 'neutral']);
 const REPORT_ICONS = new Set(['metric', 'sessions', 'orders', 'conversion', 'trend']);
@@ -96,6 +96,10 @@ function validateEmailNode(node, errors) {
   });
   if (node.template.description !== undefined && typeof node.template.description !== 'string') {
     errors.push(`${prefix} template.description must be a string`);
+  }
+  if (node.template.preset === 'inventory_alert_v1') {
+    rejectUnknownFields(node.template, new Set(['preset', 'eyebrow', 'title', 'description']), `${prefix} inventory template`, errors);
+    return;
   }
   if (!node.template.period || typeof node.template.period !== 'object' || Array.isArray(node.template.period)) {
     errors.push(`${prefix} template.period must be an object`);
@@ -177,6 +181,16 @@ function validateMessagingNode(node, errors) {
   validateBindingTemplate(node.subject, `${prefix} subject`, errors);
   if (!node.template || typeof node.template !== 'object' || Array.isArray(node.template)) {
     errors.push(`${prefix} template must be an object`);
+  } else if (node.format === 'report' && node.template.preset === 'inventory_alert_v1') {
+    ['eyebrow', 'title'].forEach((field) => {
+      if (typeof node.template[field] !== 'string' || !node.template[field].trim()) {
+        errors.push(`${prefix} inventory template.${field} is required`);
+      }
+    });
+    if (node.template.description !== undefined && typeof node.template.description !== 'string') {
+      errors.push(`${prefix} inventory template.description must be a string`);
+    }
+    rejectUnknownFields(node.template, new Set(['preset', 'eyebrow', 'title', 'description']), `${prefix} inventory template`, errors);
   }
 
   if (channels.email) {
@@ -370,6 +384,31 @@ function validateWorkflowDefinition(definition) {
     }
 
     if (node.type === 'recursive_dimension_breakdown') {
+      if (node.analysis_mode !== undefined && !['sales', 'inventory'].includes(node.analysis_mode)) {
+        errors.push(`recursive_dimension_breakdown node ${node.id} has invalid analysis_mode`);
+      }
+      if (node.analysis_mode === 'inventory') {
+        const topK = node.inventory_top_k ?? 50;
+        const reportTopK = node.inventory_report_top_k ?? 2;
+        const criticalDoh = node.critical_doh_days ?? 7;
+        const healthyDoh = node.healthy_doh_days ?? 15;
+        if (!Number.isInteger(Number(topK)) || Number(topK) < 1 || Number(topK) > 100) {
+          errors.push(`inventory breakdown node ${node.id} inventory_top_k must be an integer from 1 to 100`);
+        }
+        if (!Number.isInteger(Number(reportTopK)) || Number(reportTopK) < 1 || Number(reportTopK) > 100) {
+          errors.push(`inventory breakdown node ${node.id} inventory_report_top_k must be an integer from 1 to 100`);
+        }
+        if (!Number.isFinite(Number(criticalDoh)) || Number(criticalDoh) < 0) {
+          errors.push(`inventory breakdown node ${node.id} critical_doh_days must be a non-negative number`);
+        }
+        if (!Number.isFinite(Number(healthyDoh)) || Number(healthyDoh) <= Number(criticalDoh)) {
+          errors.push(`inventory breakdown node ${node.id} healthy_doh_days must exceed critical_doh_days`);
+        }
+        if (node.output_key !== undefined && (typeof node.output_key !== 'string' || !node.output_key.trim())) {
+          errors.push(`inventory breakdown node ${node.id} has invalid output_key`);
+        }
+        continue;
+      }
       if (node.base_metrics !== undefined) {
         if (!Array.isArray(node.base_metrics) || node.base_metrics.length === 0) {
           errors.push(`recursive_dimension_breakdown node ${node.id} must include at least one base metric`);

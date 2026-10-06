@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { format } from 'date-fns';
 import { Plus, Play, Eye, GitBranch, Edit2, Trash2, Clock, Layout } from 'lucide-react';
-import { useWorkflows, useDeleteWorkflow, useDeleteGlobalWorkflow } from '../api/hooks';
+import { useWorkflows, useDeleteWorkflow, useDeleteGlobalWorkflow, useUpdateWorkflow, useUpdateGlobalWorkflow } from '../api/hooks';
 import { useTenant } from '../context/TenantContext';
 import { Button, Badge, Card, PageSpinner, EmptyState } from '../components/ui';
 import RunWorkflowModal from '../components/RunWorkflowModal';
@@ -17,6 +17,8 @@ export default function WorkflowsPage() {
   const { data: workflows, isLoading, error } = useWorkflows();
   const deleteWorkflow = useDeleteWorkflow();
   const deleteGlobalWorkflow = useDeleteGlobalWorkflow();
+  const updateWorkflow = useUpdateWorkflow();
+  const updateGlobalWorkflow = useUpdateGlobalWorkflow();
   
   const [runModalOpen, setRunModalOpen] = useState(false);
   const [selectedWorkflow, setSelectedWorkflow] = useState(null);
@@ -42,6 +44,17 @@ export default function WorkflowsPage() {
   const handleEditClick = (workflow) => {
     setWorkflowToEdit(workflow);
     setEditModalOpen(true);
+  };
+
+  const handleStatusToggle = async (workflow) => {
+    const nextIsActive = !workflow.isActive;
+    try {
+      const update = workflow.scope === 'global' ? updateGlobalWorkflow : updateWorkflow;
+      await update.mutateAsync({ workflowId: workflow.workflowId, isActive: nextIsActive });
+      toast.success(nextIsActive ? 'Workflow activated' : 'Workflow moved to drafts');
+    } catch (err) {
+      toast.error(err.response?.data?.error || `Failed to ${nextIsActive ? 'activate' : 'move workflow to drafts'}`);
+    }
   };
 
   const handleDeleteClick = async (workflow) => {
@@ -146,9 +159,20 @@ export default function WorkflowsPage() {
                       </span>
                     </td>
                     <td className="py-4 px-6">
-                      <Badge status={workflow.isActive ? 'active' : 'inactive'}>
-                        {workflow.isActive ? 'Active' : 'Inactive'}
-                      </Badge>
+                      <div className="flex justify-center">
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-checked={Boolean(workflow.isActive)}
+                          aria-label={`${!workflow.isActive ? 'Activate' : 'Move to drafts'} ${workflow.name || workflow.workflowId}`}
+                          title={!workflow.isActive ? 'Activate workflow' : 'Move workflow to drafts'}
+                          disabled={updateWorkflow.isPending || updateGlobalWorkflow.isPending}
+                          onClick={() => handleStatusToggle(workflow)}
+                          className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors disabled:cursor-wait disabled:opacity-60 ${!workflow.isActive ? 'bg-gray-300' : 'bg-emerald-500'}`}
+                        >
+                          <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${!workflow.isActive ? 'translate-x-1' : 'translate-x-6'}`} />
+                        </button>
+                      </div>
                     </td>
                     <td className="py-4 px-6 text-sm text-gray-500">
                       {workflow.createdAt
@@ -161,7 +185,8 @@ export default function WorkflowsPage() {
                           variant="ghost"
                           size="sm"
                           onClick={() => handleRunClick(workflow)}
-                          title="Run workflow"
+                          title={!workflow.isActive ? 'Activate this workflow before running it' : 'Run workflow'}
+                          disabled={!workflow.isActive}
                         >
                           <Play className="w-4 h-4" />
                         </Button>

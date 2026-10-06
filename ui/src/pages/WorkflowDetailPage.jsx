@@ -59,6 +59,11 @@ const SCHEDULE_WINDOW_MODES = {
 };
 
 const SCHEDULE_PRESETS = {
+  weekly: {
+    label: 'Weekly',
+    cronExpr: '0 9 * * 1',
+    description: 'Runs every Monday at 09:00'
+  },
   every_5m: {
     label: 'Every 5 minutes',
     cronExpr: '*/5 * * * *',
@@ -132,6 +137,14 @@ export default function WorkflowDetailPage() {
       setScheduleTargetTenantIds([tenantId]);
     }
   }, [workflowKind, tenantId]);
+
+  useEffect(() => {
+    const nodes = data?.version?.definitionJson?.nodes || [];
+    if (nodes.some((node) => node?.analysis_mode === 'inventory')) {
+      setSelectedPreset('weekly');
+      setScheduleForm((current) => ({ ...current, name: current.name || 'Weekly inventory report' }));
+    }
+  }, [data]);
 
   if (isLoading) return <PageSpinner />;
 

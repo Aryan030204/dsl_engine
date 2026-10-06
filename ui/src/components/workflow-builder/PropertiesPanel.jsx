@@ -101,6 +101,10 @@ const DIMENSION_OPTIONS = [
 ];
 
 const BRANCH_METRIC_OPTIONS = [
+  'inventory_products_analyzed',
+  'inventory_critical_products',
+  'inventory_medium_products',
+  'inventory_healthy_products',
   'orders_delta_pct',
   'cod_orders_delta_pct',
   'ppcod_orders_delta_pct',
@@ -664,16 +668,42 @@ export default function PropertiesPanel({
 
             {data.format === 'report' ? (
               <>
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">Report Layout</label>
+                  <select
+                    value={reportTemplate.preset || 'performance_report_v1'}
+                    onChange={(e) => {
+                      const preset = e.target.value;
+                      updateReportTemplate('preset', preset);
+                      if (preset === 'inventory_alert_v1') {
+                        handleChange('template', {
+                          preset,
+                          eyebrow: 'Inventory Alert',
+                          title: 'Top Products Inventory Report',
+                          description: 'Inventory health of the top 50 products, ranked by 7-day sales.'
+                        });
+                      } else {
+                        handleChange('template', createDefaultReportTemplate());
+                      }
+                    }}
+                    className="w-full border p-2 rounded text-sm bg-white"
+                  >
+                    <option value="performance_report_v1">Performance report</option>
+                    <option value="inventory_alert_v1">Inventory alert</option>
+                  </select>
+                </div>
                 <div className="space-y-2 pt-3 border-t">
-                  <div className="text-xs font-semibold text-gray-700">Report Copy & Period</div>
+                  <div className="text-xs font-semibold text-gray-700">Report Copy</div>
                   {['eyebrow', 'title', 'description'].map((field) => (
                     <input key={field} value={reportTemplate[field] || ''} onChange={(e) => updateReportTemplate(field, e.target.value)} placeholder={field} className="w-full border p-2 rounded text-sm" />
                   ))}
-                  <input value={reportTemplate.period?.current || ''} onChange={(e) => updateReportTemplate('period', { ...(reportTemplate.period || {}), current: e.target.value })} placeholder="Current period path" className="w-full border p-2 rounded text-sm font-mono" />
-                  <input value={reportTemplate.period?.comparison || ''} onChange={(e) => updateReportTemplate('period', { ...(reportTemplate.period || {}), comparison: e.target.value })} placeholder="Comparison period path" className="w-full border p-2 rounded text-sm font-mono" />
+                  {reportTemplate.preset !== 'inventory_alert_v1' && <>
+                    <input value={reportTemplate.period?.current || ''} onChange={(e) => updateReportTemplate('period', { ...(reportTemplate.period || {}), current: e.target.value })} placeholder="Current period path" className="w-full border p-2 rounded text-sm font-mono" />
+                    <input value={reportTemplate.period?.comparison || ''} onChange={(e) => updateReportTemplate('period', { ...(reportTemplate.period || {}), comparison: e.target.value })} placeholder="Comparison period path" className="w-full border p-2 rounded text-sm font-mono" />
+                  </>}
                 </div>
 
-                <div className="space-y-3 pt-3 border-t">
+                {reportTemplate.preset !== 'inventory_alert_v1' && <div className="space-y-3 pt-3 border-t">
                   <div className="flex justify-between items-center"><span className="text-xs font-semibold text-gray-700">Metric Cards</span><button type="button" disabled={(reportTemplate.metrics || []).length >= 4} onClick={() => updateReportTemplate('metrics', [...(reportTemplate.metrics || []), { label: 'Metric', value: 'metrics.current_sessions', change: 'metrics.sessions_delta_pct', format: 'integer', icon: 'metric' }])} className="text-xs text-blue-600 disabled:text-gray-300"><Plus className="inline w-3 h-3" /> Add</button></div>
                   {(reportTemplate.metrics || []).map((metric, index) => (
                     <div key={index} className="border rounded p-2 space-y-2 bg-gray-50">
@@ -683,9 +713,9 @@ export default function PropertiesPanel({
                       <div className="flex gap-2"><select value={metric.format || 'text'} onChange={(e) => updateMetric(index, 'format', e.target.value)} className="min-w-0 flex-1 border p-1 rounded text-xs bg-white">{EMAIL_VALUE_FORMATS.map((format) => <option key={format}>{format}</option>)}</select><select value={metric.icon || 'metric'} onChange={(e) => updateMetric(index, 'icon', e.target.value)} className="min-w-0 flex-1 border p-1 rounded text-xs bg-white">{EMAIL_METRIC_ICONS.map((icon) => <option key={icon}>{icon}</option>)}</select></div>
                     </div>
                   ))}
-                </div>
+                </div>}
 
-                <div className="space-y-3 pt-3 border-t">
+                {reportTemplate.preset !== 'inventory_alert_v1' && <div className="space-y-3 pt-3 border-t">
                   <div className="flex justify-between items-center"><span className="text-xs font-semibold text-gray-700">Report Tables</span><button type="button" disabled={(reportTemplate.tables || []).length >= 4} onClick={() => updateReportTemplate('tables', [...(reportTemplate.tables || []), { title: 'Table', source: 'breakdowns.output_key', tone: 'neutral', limit: 3, columns: [{ label: 'Name', path: 'display_value', format: 'text' }] }])} className="text-xs text-blue-600 disabled:text-gray-300"><Plus className="inline w-3 h-3" /> Add</button></div>
                   {(reportTemplate.tables || []).map((table, tableIndex) => (
                     <div key={tableIndex} className="border rounded p-2 space-y-2 bg-gray-50">
@@ -704,7 +734,7 @@ export default function PropertiesPanel({
                       <button type="button" onClick={() => updateTable(tableIndex, 'columns', [...(table.columns || []), { label: 'Value', path: 'value', format: 'text' }])} className="text-[10px] text-blue-600"><Plus className="inline w-3 h-3" /> Add column</button>
                     </div>
                   ))}
-                </div>
+                </div>}
               </>
             ) : (
               <div className="pt-3 border-t">
@@ -1419,6 +1449,24 @@ export default function PropertiesPanel({
                      </div>
                  ) : (
                     <>
+                     <div>
+                       <label className="block text-xs font-medium text-gray-500 mb-1">Analysis Source</label>
+                       <select value={data.analysis_mode || 'sales'} onChange={(e) => handleChange('analysis_mode', e.target.value)} className="w-full border text-sm p-2 rounded bg-white">
+                         <option value="sales">Sales performance</option>
+                         <option value="inventory">Inventory coverage</option>
+                       </select>
+                     </div>
+                     {data.analysis_mode === 'inventory' ? (
+                       <div className="space-y-3 rounded border border-emerald-200 bg-emerald-50 p-3">
+                         <p className="text-xs text-emerald-900">Ranks products by stored 7-day sales, sums variant stock and sales, and uses the lowest stored variant DOH as the product’s risk level.</p>
+                         <div><label className="block text-xs font-medium text-gray-600 mb-1">Top products to analyze</label><input type="number" min="1" max="100" value={data.inventory_top_k ?? 50} onChange={(e) => handleChange('inventory_top_k', Number(e.target.value))} className="w-full border p-2 rounded text-sm" /></div>
+                         <div><label className="block text-xs font-medium text-gray-600 mb-1">Lowest-DOH products to show in report</label><input type="number" min="1" max="100" value={data.inventory_report_top_k ?? 2} onChange={(e) => handleChange('inventory_report_top_k', Number(e.target.value))} className="w-full border p-2 rounded text-sm" /><p className="mt-1 text-xs text-gray-500">Shows this many analyzed products, ordered from lowest DOH upward.</p></div>
+                         <div><label className="block text-xs font-medium text-gray-600 mb-1">Critical at or below (DOH days)</label><input type="number" min="0" step="0.5" value={data.critical_doh_days ?? 7} onChange={(e) => handleChange('critical_doh_days', Number(e.target.value))} className="w-full border p-2 rounded text-sm" /></div>
+                         <div><label className="block text-xs font-medium text-gray-600 mb-1">Healthy at or above (DOH days)</label><input type="number" min="0" step="0.5" value={data.healthy_doh_days ?? 15} onChange={(e) => handleChange('healthy_doh_days', Number(e.target.value))} className="w-full border p-2 rounded text-sm" /></div>
+                         <div><label className="block text-xs font-medium text-gray-600 mb-1">Output Key (optional)</label><OutputKeyInput value={data.output_key || ''} onChange={(nextValue) => handleChange('output_key', nextValue)} placeholder="inventory_top_products" suggestions={['inventory_top_products']} /></div>
+                       </div>
+                     ) : (
+                     <>
                      {partialDayProductWarnings.length > 0 && (
                         <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
                           {partialDayProductWarnings[0]}
@@ -1615,6 +1663,8 @@ export default function PropertiesPanel({
                               </div>
                           </div>
                      </div>
+                     </>
+                     )}
                   </>
                  )}
              </div>
