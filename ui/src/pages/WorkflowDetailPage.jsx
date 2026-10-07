@@ -106,6 +106,7 @@ export default function WorkflowDetailPage() {
 
   const [runModalOpen, setRunModalOpen] = useState(false);
   const [editModalOpen, setEditModalOpen] = useState(false);
+  const [selectedVersion, setSelectedVersion] = useState(null);
   const [scheduleForm, setScheduleForm] = useState({
     name: '',
     overlapPolicy: 'queue_one_pending',
@@ -116,6 +117,7 @@ export default function WorkflowDetailPage() {
   const [customCronExpr, setCustomCronExpr] = useState('*/15 * * * *');
   const [scheduleTargetTenantIds, setScheduleTargetTenantIds] = useState([]);
   const [scheduleJobProgress, setScheduleJobProgress] = useState(null);
+  const editorVersion = selectedVersion || workflow?.latestVersion;
 
   const targetableTenantIds = useMemo(() => {
     if (workflowKind === 'global') {
@@ -343,7 +345,7 @@ export default function WorkflowDetailPage() {
               View Runs
               </Button>
             </Link>
-            <Link to={`/workflows/${workflowId}/edit/visual`}>
+            <Link to={`/workflows/${workflowId}/edit/visual${editorVersion ? `?version=${encodeURIComponent(editorVersion)}` : ''}`}>
               <Button variant="secondary" className="h-10 min-w-[128px] px-4 whitespace-nowrap text-sm">
               <Layout className="w-4 h-4 mr-2" />
               Visual Editor
@@ -733,23 +735,35 @@ export default function WorkflowDetailPage() {
                   {versions?.map((v) => (
                     <li
                       key={v._id}
-                      className={`p-2 rounded border ${
-                        v.version === workflow?.latestVersion
-                          ? 'border-primary-200 bg-primary-50'
-                          : 'border-gray-200'
-                      }`}
+                      className="list-none"
                     >
-                      <div className="flex items-center justify-between">
-                        <span className="font-medium">v{v.version}</span>
-                        {v.version === workflow?.latestVersion && (
-                          <Badge status="active">Latest</Badge>
-                        )}
-                      </div>
-                      <p className="text-xs text-gray-500">
-                        {v.createdAt
-                          ? format(new Date(v.createdAt), 'MMM d, yyyy HH:mm')
-                          : '-'}
-                      </p>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedVersion(v.version)}
+                        aria-pressed={editorVersion === v.version}
+                        className={`w-full rounded border p-2 text-left transition-colors ${
+                          editorVersion === v.version
+                            ? 'border-primary-200 bg-primary-50 ring-1 ring-primary-200'
+                            : 'border-gray-200 hover:border-primary-200 hover:bg-gray-50'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="font-medium">v{v.version}</span>
+                          <div className="flex items-center gap-2">
+                            {editorVersion === v.version && v.version !== workflow?.latestVersion && (
+                              <Badge status="info">Selected</Badge>
+                            )}
+                            {v.version === workflow?.latestVersion && (
+                              <Badge status="active">Latest</Badge>
+                            )}
+                          </div>
+                        </div>
+                        <p className="mt-1 text-xs text-gray-500">
+                          {v.createdAt
+                            ? format(new Date(v.createdAt), 'MMM d, yyyy HH:mm')
+                            : '-'}
+                        </p>
+                      </button>
                     </li>
                   ))}
                 </ul>

@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { WorkflowBuilder, PageSpinner } from '../components';
-import { useWorkflow, useWorkflows, useCreateGlobalWorkflow, useCreateWorkflowForTenants, useCreateWorkflowVersion, useCreateGlobalWorkflowVersion, useTenants } from '../api/hooks';
+import { useWorkflow, useWorkflowVersions, useWorkflows, useCreateGlobalWorkflow, useCreateWorkflowForTenants, useCreateWorkflowVersion, useCreateGlobalWorkflowVersion, useTenants } from '../api/hooks';
 import { workflowApi } from '../api/endpoints';
 import { useTenant } from '../context/TenantContext';
 import toast from 'react-hot-toast';
@@ -51,6 +51,8 @@ const NEW_WORKFLOW_TEMPLATE = {
 export default function WorkflowBuilderPage() {
   const { workflowId } = useParams();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const requestedVersion = searchParams.get('version');
   const isEditing = !!workflowId;
   const { tenantId } = useTenant();
   const { data: tenants = [], isLoading: tenantsLoading } = useTenants();
@@ -63,7 +65,18 @@ export default function WorkflowBuilderPage() {
   const [jobProgress, setJobProgress] = useState(null);
 
   // Hooks for fetching (if editing)
-  const { data: workflowData, isLoading, error } = useWorkflow(workflowId);
+  const { data: workflowData, isLoading: workflowLoading, error: workflowError } = useWorkflow(workflowId);
+  const { data: workflowVersions = [], isLoading: versionsLoading, error: versionsError } = useWorkflowVersions(workflowId);
+  const historicalVersion = requestedVersion
+    ? workflowVersions.find((version) => String(version.version) === String(requestedVersion))
+    : null;
+  const isLoading = workflowLoading || Boolean(requestedVersion && versionsLoading);
+  const historicalVersionError = requestedVersion
+    ? versionsError || (!versionsLoading && !historicalVersion
+      ? new Error(`Workflow version ${requestedVersion} was not found`)
+      : null)
+    : null;
+  const error = workflowError || historicalVersionError;
 
   // Determine if editing a global workflow
   const isGlobalWorkflow = workflowData?.workflow?.scope === 'global';
@@ -73,11 +86,18 @@ export default function WorkflowBuilderPage() {
   const createGlobalVersion = useCreateGlobalWorkflowVersion(workflowId);
 
   const initialData = useMemo(() => isEditing
-        ? {
-            ...(workflowData?.version?.definitionJson || NEW_WORKFLOW_TEMPLATE),
-            name: workflowData?.workflow?.name || workflowData?.version?.definitionJson?.name
-          }
-        : NEW_WORKFLOW_TEMPLATE, [isEditing, workflowData]);
+        ? (() => {
+            const definition = requestedVersion
+              ? historicalVersion?.definitionJson
+              : workflowData?.version?.definitionJson;
+            return {
+              ...(definition || NEW_WORKFLOW_TEMPLATE),
+              ...(!requestedVersion && workflowData?.workflow?.name
+                ? { name: workflowData.workflow.name }
+                : {})
+            };
+          })()
+        : NEW_WORKFLOW_TEMPLATE, [isEditing, workflowData, requestedVersion, historicalVersion]);
 
   const tenantOptions = useMemo(() => {
     const list = Array.isArray(tenants) ? tenants : [];
@@ -255,7 +275,7 @@ export default function WorkflowBuilderPage() {
       ) : isEditing && error ? (
         <div className="text-center py-12">
           <p className="text-red-500">Error loading workflow: {error.message}</p>
-          <button onClick={() => navigate('/workflows')} className="text-blue-500 underline mt-4">
+          <button onClick={() => navigate(`/workflows/${workflowId}`)} className="text-blue-500 underline mt-4">
             Go back
           </button>
         </div>
