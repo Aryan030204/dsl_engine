@@ -43,6 +43,7 @@ export default function Login() {
   };
 
   const triggerGoogleLogin = useGoogleLogin({
+
     onSuccess: handleGoogleSuccess,
     onError: () => setError('Google Sign-In failed'),
   });

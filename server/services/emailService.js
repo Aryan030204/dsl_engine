@@ -24,6 +24,17 @@ function validateRecipients(recipients = []) {
   return { ok: true, recipients: normalized };
 }
 
+function isTestMode() {
+  return String(process.env.TEST_MODE || '').toLowerCase() === 'true';
+}
+
+function getTestModeRecipients() {
+  return String(process.env.TEST_USERS || '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
 function createTransport() {
   const user = process.env.GMAIL_USER || process.env.SMTP_USER;
   const pass = process.env.GMAIL_APP_PASSWORD || process.env.SMTP_PASS;
@@ -41,12 +52,13 @@ function createTransport() {
 }
 
 async function sendEmail({ to, subject, html, text }) {
-  const recipientsResult = validateRecipients(to);
+  const recipients = isTestMode() ? getTestModeRecipients() : to;
+  const recipientsResult = validateRecipients(recipients);
   if (!recipientsResult.ok) {
     return {
       status: 'failed',
       provider: 'smtp',
-      to: normalizeRecipients(to),
+      to: normalizeRecipients(recipients),
       error: recipientsResult.error
     };
   }

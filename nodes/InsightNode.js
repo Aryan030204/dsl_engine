@@ -9,6 +9,7 @@ const {
 } = require('../server/lib/insightUtils');
 const { renderInsightEmail } = require('../server/lib/renderInsightEmail');
 const { sendEmail } = require('../server/services/emailService');
+const confidenceWeights = require('../server/config/confidenceWeights.json');
 
 async function InsightNode(def, context) {
   const { template = {}, persist, output_key, email } = def;
@@ -278,7 +279,23 @@ function computeConfidence(metrics, evidence) {
     (evidence.current?.sessions || 0) / 1000,
     1
   );
+  const metricWeight = resolveMetricWeight(evidence.base_metric);
+  const dimensionWeight = resolveDimensionWeight(evidence.dimension);
 
-  // Simple bounded heuristic (0.3 → 0.9)
-  return Number((0.3 + 0.6 * impact * trafficWeight).toFixed(2));
+  // Simple bounded heuristic (0.3 → 0.9), with the evidence-driven portion
+  // scaled by how much this metric and dimension are trusted in
+  // confidenceWeights.json.
+  return Number(
+    (0.3 + 0.6 * impact * trafficWeight * metricWeight * dimensionWeight).toFixed(2)
+  );
+}
+
+function resolveMetricWeight(baseMetric) {
+  const weight = confidenceWeights.metrics?.[baseMetric || 'cvr']?.weight;
+  return typeof weight === 'number' ? weight : 1;
+}
+
+function resolveDimensionWeight(dimension) {
+  const weight = confidenceWeights.dimensions?.[dimension]?.weight;
+  return typeof weight === 'number' ? weight : 1;
 }

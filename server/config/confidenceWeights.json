@@ -1,0 +1,64 @@
+{
+  "_description": "Per-metric weights for confidence scoring. Not wired into computeConfidence() yet — this is config scaffolding to build the metric-aware confidence formula on top of. Weight is a relative multiplier (not required to sum to 1); higher = more trusted when this metric is the base_metric of the top evidence segment.",
+  "version": 1,
+  "metrics": {
+    "cvr": {
+      "weight": 1.0,
+      "notes": "Baseline/reference metric. Ratio of two counts (orders/sessions), moderately stable at typical volumes."
+    },
+    "orders": {
+      "weight": 0.8,
+      "notes": "Raw count-based delta; percent change can swing sharply at low baseline order counts."
+    },
+    "sessions": {
+      "weight": 0.6,
+      "notes": "High-volume, generally noisy metric; a sessions delta alone is a weaker signal of a meaningful change."
+    },
+    "atc_rate": {
+      "weight": 0.7,
+      "notes": "Ratio metric similar to cvr but typically lower volume per segment, so noisier at the same session count."
+    },
+    "atc_sessions": {
+      "weight": 0.7,
+      "notes": "Raw count-based delta, similar volatility profile to orders."
+    }
+  },
+  "dimensions": {
+    "product_id": {
+      "weight": 1.0,
+      "notes": "Discrete, business-meaningful segments; usually decision-relevant and comparatively stable."
+    },
+    "utm_source": {
+      "weight": 0.9,
+      "notes": "Coarse-grained traffic source, generally low-cardinality and stable."
+    },
+    "utm_medium": {
+      "weight": 0.9,
+      "notes": "Coarse-grained, similar stability to utm_source."
+    },
+    "utm_campaign": {
+      "weight": 0.7,
+      "notes": "Higher cardinality than source/medium; individual campaigns can have low, spiky volume."
+    },
+    "utm_content": {
+      "weight": 0.6,
+      "notes": "Higher cardinality, often low volume per value."
+    },
+    "utm_term": {
+      "weight": 0.5,
+      "notes": "Long-tail, high-cardinality, frequently sparse per value; noisiest UTM dimension."
+    },
+    "landing_page_path": {
+      "weight": 0.6,
+      "notes": "Can be high-cardinality depending on site structure; volume per page varies widely."
+    },
+    "landing_page_type": {
+      "weight": 0.8,
+      "notes": "Lower cardinality than landing_page_path (grouped page types), more stable."
+    },
+    "referrer_name": {
+      "weight": 0.7,
+      "notes": "Moderate cardinality; volume can be concentrated in a few referrers with a long tail."
+    }
+  }
+}
