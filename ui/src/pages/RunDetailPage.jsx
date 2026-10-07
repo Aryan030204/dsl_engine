@@ -39,16 +39,16 @@ function StructuredValue({ value, depth = 0 }) {
     const entries = Object.entries(value);
     if (!entries.length) return <span className="text-gray-400">No data</span>;
     if (depth >= 5) {
-      return <pre className="overflow-auto whitespace-pre-wrap break-words text-xs">{JSON.stringify(value, null, 2)}</pre>;
+      return <pre className="max-w-full overflow-auto whitespace-pre-wrap break-words text-xs">{JSON.stringify(value, null, 2)}</pre>;
     }
     return (
-      <dl className="grid grid-cols-1 gap-3 md:grid-cols-2">
+      <dl className="min-w-0 space-y-2">
         {entries.map(([key, item]) => (
           <div key={key} className="min-w-0 rounded-md bg-gray-50 p-3">
             <dt className="mb-1 text-xs font-medium uppercase tracking-wide text-gray-500">
               {formatFieldLabel(key)}
             </dt>
-            <dd className="break-words text-sm text-gray-900">
+            <dd className="min-w-0 break-words text-sm text-gray-900 [overflow-wrap:anywhere]">
               <StructuredValue value={item} depth={depth + 1} />
             </dd>
           </div>
@@ -217,6 +217,7 @@ export default function RunDetailPage() {
       .filter(Boolean)
       .at(-1)
     || null;
+  const hasSidebarContent = Boolean(run?.context?.meta || finalInsight || finalInsightMeta || finalInsightEmail);
   const metricGroups = Object.entries(run?.metrics || {}).reduce((groups, [key, value]) => {
     const normalizedKey = key.toLowerCase();
     const group = normalizedKey.includes('order')
@@ -314,7 +315,7 @@ export default function RunDetailPage() {
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         {/* Main Content */}
-        <div className="lg:col-span-2 space-y-6">
+        <div className={`${hasSidebarContent ? 'lg:col-span-2' : 'lg:col-span-3'} min-w-0 space-y-6`}>
           <RunStateDecisionCard run={run} />
 
           {/* Execution Trace */}
@@ -391,7 +392,7 @@ export default function RunDetailPage() {
         </div>
 
         {/* Sidebar */}
-        <div className="space-y-6">
+        {hasSidebarContent && <div className="min-w-0 space-y-6">
           {/* Context - Meta */}
           {run?.context?.meta && (
             <Card>
@@ -494,7 +495,7 @@ export default function RunDetailPage() {
               </CardContent>
             </Card>
           )}
-        </div>
+        </div>}
       </div>
     </div>
   );

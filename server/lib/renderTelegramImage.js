@@ -4,6 +4,7 @@ const WIDTH = 1120;
 const PAGE_ROW_LIMIT = 8;
 const MAX_ROWS = 120;
 const MAX_IMAGE_BYTES = 60 * 1024;
+const INVENTORY_ROWS_PER_PAGE = 6;
 const FONT = 'Arial, sans-serif';
 
 const COLORS = {
@@ -89,6 +90,149 @@ function normalizeReport(viewModel) {
     }),
     notes: []
   }));
+}
+
+function fitCellLines(value, maxLength, maxLines) {
+  const words = String(value ?? '').trim().split(/\s+/).filter(Boolean);
+  const lines = [];
+  let line = '';
+  for (const word of words) {
+    let remainder = word;
+    while (remainder.length > maxLength) {
+      if (line) {
+        lines.push(line);
+        line = '';
+      }
+      lines.push(remainder.slice(0, maxLength));
+      remainder = remainder.slice(maxLength);
+    }
+    const next = line ? `${line} ${remainder}` : remainder;
+    if (next.length > maxLength && line) {
+      lines.push(line);
+      line = remainder;
+    } else {
+      line = next;
+    }
+  }
+  if (line) lines.push(line);
+  if (lines.length <= maxLines) return lines;
+  const clipped = lines.slice(0, maxLines);
+  clipped[maxLines - 1] = `${clipped[maxLines - 1].slice(0, Math.max(1, maxLength - 1))}…`;
+  return clipped;
+}
+
+function renderInventoryTableRow(row, index, y) {
+  const left = 48;
+  const widths = [42, 286, 250, 140, 140, 166];
+  const values = [String(index + 1), ...((row.cells || []).map((cell) => cell.value))];
+  const height = 88;
+  let x = left;
+  let markup = `<rect x="${left}" y="${y}" width="${widths.reduce((sum, width) => sum + width, 0)}" height="${height}" fill="${index % 2 ? '#ffffff' : '#f8fafc'}" stroke="#e2e8f0"/>`;
+  values.slice(0, widths.length).forEach((value, columnIndex) => {
+    const cellWidth = widths[columnIndex];
+    const isStatus = columnIndex === 5;
+    const status = String(value || '');
+    const statusColor = status === 'Critical' ? '#dc2626' : status === 'Low stock' ? '#d97706' : status === 'Healthy' ? '#059669' : '#64748b';
+    const lines = fitCellLines(value, columnIndex === 2 ? 27 : columnIndex === 1 ? 31 : 18, 2);
+    if (isStatus) {
+      markup += `<rect x="${x + 10}" y="${y + 28}" width="${cellWidth - 20}" height="32" rx="16" fill="${statusColor}20"/>`;
+      markup += text(x + (cellWidth / 2), y + 50, status, { size: 16, weight: 800, color: statusColor, anchor: 'middle' });
+    } else if (columnIndex === 0) {
+      markup += `<rect x="${x + 8}" y="${y + 28}" width="28" height="32" rx="5" fill="#dbeafe"/>`;
+      markup += text(x + 22, y + 50, status, { size: 16, weight: 800, color: '#1d4ed8', anchor: 'middle' });
+    } else {
+      const color = columnIndex === 4 ? (status === '—' ? '#64748b' : '#111827') : '#1f2937';
+      lines.forEach((line, lineIndex) => {
+        markup += text(x + 10, y + 37 + (lineIndex * 24), line, {
+          size: columnIndex === 4 ? 19 : 15,
+          weight: columnIndex === 4 ? 800 : 600,
+          color
+        });
+      });
+    }
+    x += cellWidth;
+  });
+  return markup;
+}
+
+async function renderInventoryTelegramImages({ title, reportViewModel, workflowName, severity }) {
+  const inventory = reportViewModel.inventory;
+  const table = reportViewModel.tables?.[0] || { rows: [] };
+  const rows = Array.isArray(table.rows) ? table.rows : [];
+  const pageCount = Math.max(1, Math.ceil(rows.length / INVENTORY_ROWS_PER_PAGE));
+  const brandName = reportViewModel.branding?.displayName || 'Inventory report';
+  const description = reportViewModel.description || 'Inventory health of top-selling products.';
+  const presentation = getPresentation(severity);
+  const cards = [
+    ['PRODUCTS ANALYSED', inventory.analyzed_count, '#2563eb', '#eff6ff'],
+    ['CRITICAL', inventory.critical_count, '#dc2626', '#fef2f2'],
+    ['LOW STOCK', inventory.medium_count, '#d97706', '#fff7ed'],
+    ['HEALTHY', inventory.healthy_count, '#059669', '#ecfdf5']
+  ];
+  const images = [];
+
+  for (let pageIndex = 0; pageIndex < pageCount; pageIndex += 1) {
+    const pageRows = rows.slice(pageIndex * INVENTORY_ROWS_PER_PAGE, (pageIndex + 1) * INVENTORY_ROWS_PER_PAGE);
+    const left = 48;
+    const tableWidth = 1024;
+    const sectionY = 490;
+    const tableY = sectionY + 20;
+    const imageHeight = tableY + 54 + Math.max(pageRows.length, 1) * 88 + 72;
+    let svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${WIDTH}" height="${imageHeight}" viewBox="0 0 ${WIDTH} ${imageHeight}">
+      <rect width="100%" height="100%" fill="#eef2f7"/><rect x="24" y="24" width="1072" height="${imageHeight - 48}" rx="12" fill="#fff" stroke="#dbe3ee"/>
+      <rect x="24" y="24" width="1072" height="292" rx="12" fill="#effaf4"/>
+      ${text(48, 72, brandName.toUpperCase(), { size: 23, weight: 900, color: '#111827' })}
+      ${text(1072, 65, 'INVENTORY AS OF', { size: 14, weight: 700, color: '#64748b', anchor: 'end' })}
+      ${text(1072, 94, reportViewModel.asOf || inventory.as_of || 'DATE UNAVAILABLE', { size: 20, weight: 900, color: '#059669', anchor: 'end' })}
+      <rect x="455" y="112" width="210" height="34" rx="17" fill="#d1fae5"/>
+      ${text(560, 135, reportViewModel.eyebrow || 'Inventory Alert', { size: 15, weight: 800, color: '#047857', anchor: 'middle' })}
+      ${text(560, 190, reportViewModel.title || 'Top Products Inventory Report', { size: 32, weight: 900, color: '#111827', anchor: 'middle' })}
+      ${text(560, 222, description, { size: 17, color: '#5b6475', anchor: 'middle' })}
+      <rect x="950" y="112" width="122" height="34" rx="5" fill="#334155"/>
+      ${text(1011, 135, presentation.label, { size: 14, weight: 800, color: '#fff', anchor: 'middle' })}
+      ${text(left, 355, 'INVENTORY OVERVIEW', { size: 20, weight: 900, color: '#111827' })}`;
+
+    const cardY = 372;
+    const cardGap = 12;
+    const cardWidth = (tableWidth - cardGap * 3) / 4;
+    cards.forEach(([label, value, color, background], index) => {
+      const x = left + index * (cardWidth + cardGap);
+      svg += `<rect x="${x}" y="${cardY}" width="${cardWidth}" height="92" rx="9" fill="${background}" stroke="#e5e7eb"/>`;
+      svg += text(x + 13, cardY + 27, label, { size: 13, weight: 800, color: '#334155' });
+      svg += text(x + 13, cardY + 70, String(value ?? 0), { size: 31, weight: 900, color });
+    });
+
+    svg += text(left, sectionY, pageIndex === 0 ? (table.title || 'Products with Lowest DOH').toUpperCase() : `${table.title || 'PRODUCTS WITH LOWEST DOH'} (CONTINUED)`.toUpperCase(), { size: 19, weight: 900, color: '#111827' });
+    const widths = [42, 286, 250, 140, 140, 166];
+    svg += `<rect x="${left}" y="${tableY}" width="${tableWidth}" height="54" rx="5" fill="#f1f5f9" stroke="#dbe3ee"/>`;
+    const labels = ['#', 'PRODUCT', 'SKU', 'DRR (7 DAYS)', 'DOH (7 DAYS)', 'STATUS'];
+    let headerX = left;
+    labels.forEach((label, index) => {
+      const align = index === 3 || index === 4 ? 'end' : index === 5 ? 'middle' : 'start';
+      const x = align === 'end' ? headerX + widths[index] - 10 : align === 'middle' ? headerX + widths[index] / 2 : headerX + 10;
+      svg += text(x, tableY + 34, label, { size: 12, weight: 800, color: '#64748b', anchor: align });
+      headerX += widths[index];
+    });
+    if (pageRows.length) {
+      pageRows.forEach((row, rowIndex) => {
+        svg += renderInventoryTableRow(row, pageIndex * INVENTORY_ROWS_PER_PAGE + rowIndex, tableY + 54 + rowIndex * 88);
+      });
+    } else {
+      svg += `<rect x="${left}" y="${tableY + 54}" width="${tableWidth}" height="80" fill="#fff" stroke="#e2e8f0"/>`;
+      svg += text(left + 18, tableY + 101, 'No products with a calculable DOH were found.', { size: 18, color: '#64748b' });
+    }
+    svg += text(left, imageHeight - 38, workflowName ? `${workflowName} · ${brandName}` : brandName, { size: 14, color: '#64748b' });
+    svg += text(WIDTH - left, imageHeight - 38, pageCount > 1 ? `PAGE ${pageIndex + 1} OF ${pageCount}` : 'GENERATED BY DATUM INTELLIGENCE', { size: 13, color: '#64748b', anchor: 'end' });
+    svg += '</svg>';
+
+    let buffer = await sharp(Buffer.from(svg)).resize({ width: 900, withoutEnlargement: true }).jpeg({ quality: 65, mozjpeg: true }).toBuffer();
+    if (buffer.length > MAX_IMAGE_BYTES) {
+      buffer = await sharp(Buffer.from(svg)).resize({ width: 760, withoutEnlargement: true }).jpeg({ quality: 48, mozjpeg: true }).toBuffer();
+    }
+    if (buffer.length > MAX_IMAGE_BYTES) throw new Error(`Telegram inventory report image exceeds ${MAX_IMAGE_BYTES} bytes`);
+    images.push(`data:image/jpeg;base64,${buffer.toString('base64')}`);
+  }
+  return images;
 }
 
 function paginateSections(sections) {
@@ -256,6 +400,9 @@ async function renderTelegramPage({ title, summary, confidence, sections, brandN
 }
 
 async function renderTelegramImages({ title, message, insight, reportViewModel, brandName, workflowName, severity = 'info' }) {
+  if (reportViewModel?.inventory) {
+    return renderInventoryTelegramImages({ title, reportViewModel, workflowName, severity });
+  }
   const sections = reportViewModel ? normalizeReport(reportViewModel) : normalizeDetails(insight);
   const summary = reportViewModel?.description || reportViewModel?.title || insight?.summary || '';
   const confidence = insight?.confidence;

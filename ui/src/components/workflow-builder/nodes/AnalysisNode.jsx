@@ -23,7 +23,7 @@ export const AnalysisNode = ({ data, isConnectable }) => {
         </div>
         
         <div className="p-3 text-xs text-gray-600">
-            <div className="font-semibold text-blue-700 mb-1">{typeLabel}</div>
+            <div className="font-semibold text-blue-700 mb-1">{!isComparison && data.analysis_mode === 'inventory' ? 'Inventory Breakdown' : typeLabel}</div>
             
             {/* Metric Compare View */}
             {isComparison && metrics.length > 0 && (
@@ -35,7 +35,14 @@ export const AnalysisNode = ({ data, isConnectable }) => {
             )}
 
             {/* Dimension Breakdown View */}
-            {!isComparison && (
+            {!isComparison && data.analysis_mode === 'inventory' && (
+                <div className="space-y-1 text-[10px]">
+                    <div>Top {data.inventory_top_k || 50} products by 7-day sales</div>
+                    <div>Report shows {data.inventory_report_top_k || 2} lowest-DOH products</div>
+                    <div>Critical ≤ {data.critical_doh_days ?? 7} DOH · Healthy ≥ {data.healthy_doh_days ?? 15} DOH</div>
+                </div>
+            )}
+            {!isComparison && data.analysis_mode !== 'inventory' && (
                 <div className="space-y-1">
                     {baseMetrics.length > 0 && (
                         <div className="flex items-center gap-1">

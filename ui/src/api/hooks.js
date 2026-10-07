@@ -183,7 +183,11 @@ export function useUpdateWorkflow(workflowId) {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (updates) => workflowApi.update(tenantId, workflowId, updates),
+    mutationFn: (variables) => {
+      const targetWorkflowId = variables?.workflowId || workflowId;
+      const updates = variables?.updates || variables;
+      return workflowApi.update(tenantId, targetWorkflowId, updates);
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['workflow', tenantId, workflowId] });
       queryClient.invalidateQueries({ queryKey: ['workflows', tenantId] });
@@ -195,7 +199,11 @@ export function useUpdateGlobalWorkflow(workflowId) {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (updates) => workflowApi.updateGlobal(workflowId, updates),
+    mutationFn: (variables) => {
+      const targetWorkflowId = variables?.workflowId || workflowId;
+      const updates = variables?.updates || variables;
+      return workflowApi.updateGlobal(targetWorkflowId, updates);
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['workflow'] });
       queryClient.invalidateQueries({ queryKey: ['workflows'] });

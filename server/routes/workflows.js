@@ -24,6 +24,12 @@ function normalizeTriggerDefinition(definition, tenantId, scope = 'tenant') {
   const next = { ...definition };
   const trigger = { ...(definition.trigger || {}) };
 
+  // Inventory-trigger behavior is opt-in per workflow node. Preserve every
+  // existing workflow's configured alert type and defaults.
+  if ((definition.nodes || []).some((node) => node?.analysis_mode === 'inventory')) {
+    trigger.alertType = 'inventory_critical';
+  }
+
   if (!trigger.alertType) {
     trigger.alertType = trigger.metric || 'default_alert';
   }

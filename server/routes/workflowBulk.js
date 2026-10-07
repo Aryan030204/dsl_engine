@@ -44,6 +44,10 @@ function normalizeTenantWorkflowDefinition(definition, tenantIds) {
   const next = { ...(definition || {}) };
   const trigger = { ...(next.trigger || {}) };
 
+  if ((next.nodes || []).some((node) => node?.analysis_mode === 'inventory')) {
+    trigger.alertType = 'inventory_critical';
+  }
+
   if (!trigger.alertType) {
     trigger.alertType = trigger.metric || 'default_alert';
   }
