@@ -7,7 +7,9 @@ const UserSchema = new mongoose.Schema(
     password: { type: String }, // Optional for Google users
     googleId: { type: String, unique: true, sparse: true }, // Optional for local users
     avatar: { type: String },
-    role: { type: String, default: 'user' }
+    role: { type: String, enum: ['user', 'admin'], default: 'user' },
+    tenantIds: { type: [String], default: [] }, // tenants this user may access (admins: all)
+    tokenVersion: { type: Number, default: 0 } // bumped on logout to revoke issued JWTs
   },
   { 
     timestamps: true,

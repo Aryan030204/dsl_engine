@@ -1,4 +1,5 @@
 const express = require('express');
+const { deniedTenants } = require('../middleware/auth');
 const crypto = require('crypto');
 const Workflow = require('../models/Workflow');
 const WorkflowVersion = require('../models/WorkflowVersion');
@@ -404,12 +405,20 @@ function enqueueBulkScheduleJob(jobId) {
 
 const router = express.Router();
 
+function denyUnauthorizedTenants(req, res, tenantIds) {
+  const denied = deniedTenants(req.user, tenantIds);
+  if (!denied.length) return false;
+  res.status(403).json({ error: 'No access to one or more tenants', deniedTenantIds: denied });
+  return true;
+}
+
 router.post('/bulk', async (req, res, next) => {
   try {
     const tenantIds = normalizeTenantIds(req.body?.tenantIds);
     if (!tenantIds.length) {
       return res.status(400).json({ error: 'tenantIds must include at least one tenant' });
     }
+    if (denyUnauthorizedTenants(req, res, tenantIds)) return;
 
     const workflowId = generateWorkflowId();
     const definition = normalizeTenantWorkflowDefinition(
@@ -467,7 +476,7 @@ router.post('/bulk', async (req, res, next) => {
 router.get('/jobs/:jobId', async (req, res, next) => {
   try {
     const job = await WorkflowJob.findById(req.params.jobId).lean();
-    if (!job) {
+    if (!job || deniedTenants(req.user, job.tenantIds).length) {
       return res.status(404).json({ error: 'workflow job not found' });
     }
 
@@ -481,6 +490,7 @@ router.post('/:workflowId/schedules/bulk', async (req, res, next) => {
   try {
     const { workflowId } = req.params;
     const tenantIds = normalizeTenantIds(req.body?.tenantIds);
+    if (denyUnauthorizedTenants(req, res, tenantIds)) return;
     const job = await createBulkScheduleJob({ workflowId, tenantIds, payload: req.body || {} });
     res.status(202).json({ job: serializeJob(job) });
   } catch (error) {

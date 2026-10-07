@@ -5,6 +5,7 @@ const api = axios.create({
   withCredentials: true, // Enable sending cookies with requests
   headers: {
     'Content-Type': 'application/json',
+    'X-Requested-With': 'XMLHttpRequest', // CSRF guard: required by the API on state-changing requests
   },
 });
 

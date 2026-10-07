@@ -16,6 +16,7 @@ const scheduleRoutes = require('./server/routes/schedules');
 const triggerRoutes = require('./server/routes/triggers');
 const schedulerRoutes = require('./server/routes/scheduler');
 const alertsIngestRoutes = require('./server/routes/alertsIngest');
+const { requireAuth, requireTenantAccess, allowIngestToken } = require('./server/middleware/auth');
 const telegramRoutes = require('./server/routes/telegram');
 const { startLinkBot } = require('./server/services/telegramBot');
 
@@ -61,6 +62,17 @@ app.get('/version', (req, res) => {
 });
 
 app.use('/auth', authRoutes);
+
+// Machine-to-machine alert ingestion authenticates with ALERTS_INGEST_TOKEN, not a user session.
+app.use('/tenants', alertsIngestRoutes);
+app.use('/tenants/:tenantId/triggers/events', allowIngestToken);
+
+// Everything below requires a logged-in user; tenant-scoped routes also require tenant access.
+app.use('/tenants', requireAuth);
+app.use('/tenants/:tenantId', requireTenantAccess);
+app.use('/workflows', requireAuth);
+app.use('/telegram', requireAuth);
+
 app.use('/tenants', tenantRoutes);
 app.use('/workflows/global', globalWorkflowRoutes);
 app.use('/workflows', workflowBulkRoutes);
@@ -70,7 +82,6 @@ app.use('/tenants/:tenantId/workflows', scheduleRoutes);
 app.use('/tenants/:tenantId/insights', insightRoutes);
 app.use('/tenants/:tenantId/triggers', triggerRoutes);
 app.use('/tenants/:tenantId/scheduler', schedulerRoutes);
-app.use('/tenants', alertsIngestRoutes);
 app.use('/telegram', telegramRoutes);
 
 app.use((err, req, res, next) => {

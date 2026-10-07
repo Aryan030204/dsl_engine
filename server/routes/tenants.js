@@ -1,5 +1,6 @@
 const express = require('express');
 const Tenant = require('../models/Tenant');
+const { requireAdmin } = require('../middleware/auth');
 const WorkflowSchedule = require('../models/WorkflowSchedule');
 const WorkflowRun = require('../models/WorkflowRun');
 const { getNextRunAt } = require('../../scheduler/app/cronUtils');
@@ -31,7 +32,11 @@ const router = express.Router();
 // List all tenants
 router.get('/', async (req, res, next) => {
   try {
-    const tenants = await Tenant.find({ isActive: true }).sort({ name: 1 }).lean();
+    const filter = { isActive: true };
+    if (req.user.role !== 'admin') {
+      filter.tenantId = { $in: req.user.tenantIds || [] };
+    }
+    const tenants = await Tenant.find(filter).sort({ name: 1 }).lean();
     res.json({ tenants });
   } catch (err) {
     next(err);
@@ -73,7 +78,7 @@ router.get('/:tenantId/runs', async (req, res, next) => {
 });
 
 // Create a new tenant
-router.post('/', async (req, res, next) => {
+router.post('/', requireAdmin, async (req, res, next) => {
   try {
     const { tenantId, name, description, settings } = req.body;
 
@@ -169,7 +174,7 @@ router.patch('/:tenantId', async (req, res, next) => {
 });
 
 // Delete (deactivate) a tenant
-router.delete('/:tenantId', async (req, res, next) => {
+router.delete('/:tenantId', requireAdmin, async (req, res, next) => {
   try {
     const { tenantId } = req.params;
     const tenant = await Tenant.findOne({ tenantId });

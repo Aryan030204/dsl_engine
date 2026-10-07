@@ -26,7 +26,6 @@ export const AuthProvider = ({ children }) => {
 
   const login = async (email, password) => {
     try {
-      setLoading(true);
       const { data } = await api.post('/auth/login', { email, password });
       setUser(data.user);
       toast.success('Logged in successfully');
@@ -35,14 +34,11 @@ export const AuthProvider = ({ children }) => {
       const errorMsg = err.response?.data?.error || 'Login failed';
       toast.error(errorMsg);
       return { success: false, error: errorMsg };
-    } finally {
-      setLoading(false);
     }
   };
 
   const signup = async (name, email, password) => {
     try {
-      setLoading(true);
       const { data } = await api.post('/auth/signup', { name, email, password });
       setUser(data.user);
       toast.success('Account created successfully');
@@ -51,14 +47,11 @@ export const AuthProvider = ({ children }) => {
       const errorMsg = err.response?.data?.error || 'Signup failed';
       toast.error(errorMsg);
       return { success: false, error: errorMsg };
-    } finally {
-      setLoading(false);
     }
   };
 
   const googleLogin = async (idToken) => {
     try {
-      setLoading(true);
       const { data } = await api.post('/auth/google', { idToken });
       setUser(data.user);
       toast.success('Logged in with Google');
@@ -67,8 +60,6 @@ export const AuthProvider = ({ children }) => {
       const errorMsg = err.response?.data?.error || 'Google login failed';
       toast.error(errorMsg);
       return { success: false, error: errorMsg };
-    } finally {
-      setLoading(false);
     }
   };
 
