@@ -7,6 +7,9 @@ const {
   normalizeWindowForQuery
 } = require('../../lib/timeWindowUtils');
 
+// shopify_orders.created_date is a varchar(10) 'YYYY-MM-DD'. Comparing it with DATE(?) makes MySQL
+// convert the column row by row (no index use, full table scan). LEFT(?, 10) yields the same
+// 'YYYY-MM-DD' string, so the comparison stays string-to-string and the created_date indexes apply.
 const ALLOWED_DIMENSIONS = new Set([
   'product_id',
   'utm_source',
@@ -35,7 +38,7 @@ function buildPaymentOrderCtes({ dimension, filterSql, notNullSql, timestampMode
         created_at,
         STR_TO_DATE(CONCAT(created_date, ' ', created_time), '%Y-%m-%d %H:%i:%s')
       ) <  ?`
-    : 'created_date >= DATE(?) AND created_date < DATE(?)';
+    : 'created_date >= LEFT(?, 10) AND created_date < LEFT(?, 10)';
 
   const classifiedCte = (period) => `${period}_payment_classified AS (
   SELECT
@@ -184,7 +187,9 @@ current_sessions AS (
     COALESCE(SUM(sessions), 0) AS sessions,
     COALESCE(SUM(sessions_with_cart_additions), 0) AS atc_sessions
   FROM hourly_product_performance_rollup
-  WHERE CONCAT(date, ' ', LPAD(hour, 2, '0'), ':00:00') >= ?
+  WHERE date >= DATE(?)
+    AND date <= DATE(?)
+    AND CONCAT(date, ' ', LPAD(hour, 2, '0'), ':00:00') >= ?
     AND CONCAT(date, ' ', LPAD(hour, 2, '0'), ':00:00') <  ?
     ${filterSql}
     ${notNullSql}
@@ -196,7 +201,9 @@ baseline_sessions AS (
     COALESCE(SUM(sessions), 0) AS sessions,
     COALESCE(SUM(sessions_with_cart_additions), 0) AS atc_sessions
   FROM hourly_product_performance_rollup
-  WHERE CONCAT(date, ' ', LPAD(hour, 2, '0'), ':00:00') >= ?
+  WHERE date >= DATE(?)
+    AND date <= DATE(?)
+    AND CONCAT(date, ' ', LPAD(hour, 2, '0'), ':00:00') >= ?
     AND CONCAT(date, ' ', LPAD(hour, 2, '0'), ':00:00') <  ?
     ${filterSql}
     ${notNullSql}
@@ -207,7 +214,9 @@ current_orders AS (
     product_id AS dimension_value,
     COALESCE(SUM(orders), 0) AS orders
   FROM hourly_product_performance_rollup
-  WHERE CONCAT(date, ' ', LPAD(hour, 2, '0'), ':00:00') >= ?
+  WHERE date >= DATE(?)
+    AND date <= DATE(?)
+    AND CONCAT(date, ' ', LPAD(hour, 2, '0'), ':00:00') >= ?
     AND CONCAT(date, ' ', LPAD(hour, 2, '0'), ':00:00') <  ?
     ${filterSql}
     ${notNullSql}
@@ -218,7 +227,9 @@ baseline_orders AS (
     product_id AS dimension_value,
     COALESCE(SUM(orders), 0) AS orders
   FROM hourly_product_performance_rollup
-  WHERE CONCAT(date, ' ', LPAD(hour, 2, '0'), ':00:00') >= ?
+  WHERE date >= DATE(?)
+    AND date <= DATE(?)
+    AND CONCAT(date, ' ', LPAD(hour, 2, '0'), ':00:00') >= ?
     AND CONCAT(date, ' ', LPAD(hour, 2, '0'), ':00:00') <  ?
     ${filterSql}
     ${notNullSql}
@@ -235,7 +246,9 @@ product_titles AS (
     product_id AS dimension_value,
     MAX(product_title) AS product_title
   FROM hourly_product_performance_rollup
-  WHERE CONCAT(date, ' ', LPAD(hour, 2, '0'), ':00:00') >= ?
+  WHERE date >= DATE(?)
+    AND date <= DATE(?)
+    AND CONCAT(date, ' ', LPAD(hour, 2, '0'), ':00:00') >= ?
     AND CONCAT(date, ' ', LPAD(hour, 2, '0'), ':00:00') <  ?
     ${filterSql}
     ${notNullSql}
@@ -284,7 +297,9 @@ current_path_product_sessions AS (
     COALESCE(SUM(sessions), 0) AS sessions,
     COALESCE(SUM(sessions_with_cart_additions), 0) AS atc_sessions
   FROM hourly_product_sessions
-  WHERE CONCAT(date, ' ', LPAD(hour, 2, '0'), ':00:00') >= ?
+  WHERE date >= DATE(?)
+    AND date <= DATE(?)
+    AND CONCAT(date, ' ', LPAD(hour, 2, '0'), ':00:00') >= ?
     AND CONCAT(date, ' ', LPAD(hour, 2, '0'), ':00:00') <  ?
     ${filterSql}
     AND product_id IS NOT NULL
@@ -297,7 +312,9 @@ baseline_path_product_sessions AS (
     COALESCE(SUM(sessions), 0) AS sessions,
     COALESCE(SUM(sessions_with_cart_additions), 0) AS atc_sessions
   FROM hourly_product_sessions
-  WHERE CONCAT(date, ' ', LPAD(hour, 2, '0'), ':00:00') >= ?
+  WHERE date >= DATE(?)
+    AND date <= DATE(?)
+    AND CONCAT(date, ' ', LPAD(hour, 2, '0'), ':00:00') >= ?
     AND CONCAT(date, ' ', LPAD(hour, 2, '0'), ':00:00') <  ?
     ${filterSql}
     AND product_id IS NOT NULL
@@ -318,8 +335,8 @@ current_product_orders AS (
     product_id,
     COALESCE(COUNT(DISTINCT order_name), 0) AS orders
   FROM shopify_orders
-  WHERE created_date >= DATE(?)
-    AND created_date <= DATE(?)
+  WHERE created_date >= LEFT(?, 10)
+    AND created_date <= LEFT(?, 10)
     AND COALESCE(
       created_at,
       STR_TO_DATE(CONCAT(created_date, ' ', created_time), '%Y-%m-%d %H:%i:%s')
@@ -337,8 +354,8 @@ baseline_product_orders AS (
     product_id,
     COALESCE(COUNT(DISTINCT order_name), 0) AS orders
   FROM shopify_orders
-  WHERE created_date >= DATE(?)
-    AND created_date <= DATE(?)
+  WHERE created_date >= LEFT(?, 10)
+    AND created_date <= LEFT(?, 10)
     AND COALESCE(
       created_at,
       STR_TO_DATE(CONCAT(created_date, ' ', created_time), '%Y-%m-%d %H:%i:%s')
@@ -454,8 +471,8 @@ current_orders AS (
     ${dimension} AS dimension_value,
     COALESCE(COUNT(DISTINCT order_name), 0) AS orders
   FROM shopify_orders
-  WHERE created_date >= DATE(?)
-    AND created_date <  DATE(?)
+  WHERE created_date >= LEFT(?, 10)
+    AND created_date <  LEFT(?, 10)
     ${filterSql}
   GROUP BY ${dimension}
 ),
@@ -464,8 +481,8 @@ baseline_orders AS (
     ${dimension} AS dimension_value,
     COALESCE(COUNT(DISTINCT order_name), 0) AS orders
   FROM shopify_orders
-  WHERE created_date >= DATE(?)
-    AND created_date <  DATE(?)
+  WHERE created_date >= LEFT(?, 10)
+    AND created_date <  LEFT(?, 10)
     ${filterSql}
   GROUP BY ${dimension}
 ),` : ''}
@@ -571,17 +588,17 @@ module.exports = function dimensionBreakdownQuery({
       : buildDefaultDimensionSql({ dimension, filterSql, notNullSql, includeOrders, includePaymentOrders, includeProductTitle });
 
   const params = useHourlyProductRollup ? [
-    windowStart, windowEnd,
+    windowStart, windowEnd, windowStart, windowEnd,
     ...filterParams,
 
-    baselineStart, baselineEnd,
+    baselineStart, baselineEnd, baselineStart, baselineEnd,
     ...filterParams,
 
     ...(includeOrders ? [
-      windowStart, windowEnd,
+      windowStart, windowEnd, windowStart, windowEnd,
       ...filterParams,
 
-      baselineStart, baselineEnd,
+      baselineStart, baselineEnd, baselineStart, baselineEnd,
       ...filterParams
     ] : []),
 
@@ -592,13 +609,13 @@ module.exports = function dimensionBreakdownQuery({
       ...filterParams
     ] : []),
 
-    titleStart, titleEnd,
+    titleStart, titleEnd, titleStart, titleEnd,
     ...filterParams
   ] : useHourlyLandingPagePathAttribution ? [
-    windowStart, windowEnd,
+    windowStart, windowEnd, windowStart, windowEnd,
     ...filterParams,
 
-    baselineStart, baselineEnd,
+    baselineStart, baselineEnd, baselineStart, baselineEnd,
     ...filterParams,
 
     ...(includeOrders ? [

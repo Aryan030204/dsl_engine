@@ -13,9 +13,36 @@ const baselineWindow = { start: '2026-09-13 00:00:00', end: '2026-09-14 00:00:00
 test('sales tables are only queried when sales or aov is requested', () => {
   const plain = metricQuery({ tenantId: 'TMC', metrics: ['cvr', 'orders'], window, baselineWindow, timezone: 'UTC' });
   assert.doesNotMatch(plain.sql, /hour_wise_sales|overall_summary/);
-  // sessions (4) + orders (4) + payment-type orders (4), no sales
-  assert.equal(plain.params.length, 12);
+  // sessions (2 windows x 4: date range + exact hour bounds) + orders (2 windows x 4), no payment, no sales
+  assert.equal(plain.params.length, 16);
   assert.equal(plain.meta.salesSources, null);
+});
+
+test('payment-type orders are only queried when a payment metric is requested', () => {
+  const plain = metricQuery({ tenantId: 'TMC', metrics: ['cvr', 'orders', 'sales'], window, baselineWindow, timezone: 'UTC' });
+  assert.doesNotMatch(plain.sql, /payment_orders|payment_gateway_names/);
+  // the result columns the node reads still exist, as zeros
+  assert.match(plain.sql, /0 AS current_cod_orders/);
+  assert.equal((plain.sql.match(/\?/g) || []).length, plain.params.length);
+
+  for (const metric of ['cod_orders', 'ppcod_orders', 'prepaid_orders']) {
+    const q = metricQuery({ tenantId: 'TMC', metrics: ['cvr', metric], window, baselineWindow, timezone: 'UTC' });
+    assert.match(q.sql, /current_payment_orders AS/);
+    assert.match(q.sql, /baseline_payment_orders AS/);
+    assert.match(q.sql, /cpo\.cod_orders AS current_cod_orders/);
+    assert.equal((q.sql.match(/\?/g) || []).length, q.params.length);
+    // payment-type orders add one (date range + exact bounds) group per window after sessions and orders
+    assert.deepEqual(q.params.slice(16, 24), [
+      '2026-09-14 00:00:00', '2026-09-15 00:00:00', '2026-09-14 00:00:00', '2026-09-15 00:00:00',
+      '2026-09-13 00:00:00', '2026-09-14 00:00:00', '2026-09-13 00:00:00', '2026-09-14 00:00:00'
+    ]);
+  }
+});
+
+test('hourly tables are filtered with an index-friendly date range plus exact hour bounds', () => {
+  const q = metricQuery({ tenantId: 'TMC', metrics: ['cvr', 'sales'], window: { start: '2026-09-24 00:00:00', end: '2026-09-24 14:00:00' }, baselineWindow: { start: '2026-09-23 00:00:00', end: '2026-09-23 14:00:00' }, timezone: 'UTC' });
+  assert.match(q.sql, /date >= DATE\(\?\)\s+AND date <= DATE\(\?\)\s+AND CONCAT\(date, ' ', LPAD\(hour, 2, '0'\), ':00:00'\) >= \?/);
+  assert.deepEqual(q.params.slice(0, 4), ['2026-09-24 00:00:00', '2026-09-24 14:00:00', '2026-09-24 00:00:00', '2026-09-24 14:00:00']);
 });
 
 test('complete-day windows read sales from overall_summary by date', () => {
@@ -26,7 +53,7 @@ test('complete-day windows read sales from overall_summary by date', () => {
     assert.doesNotMatch(q.sql, /hour_wise_sales/);
     assert.match(q.sql, /SUM\(total_orders\)/);
     // [date >= start day, date < end day] for current, then baseline.
-    assert.deepEqual(q.params.slice(12), ['2026-09-14', '2026-09-15', '2026-09-13', '2026-09-14']);
+    assert.deepEqual(q.params.slice(16), ['2026-09-14', '2026-09-15', '2026-09-13', '2026-09-14']);
   }
 });
 
@@ -48,7 +75,11 @@ test('today-until-now vs yesterday-until-same-hour reads hour_wise_sales', () =>
   assert.deepEqual(q.meta.salesSources, { current: 'hour_wise_sales', baseline: 'hour_wise_sales' });
   assert.doesNotMatch(q.sql, /overall_summary/);
   assert.match(q.sql, /SUM\(number_of_orders\)/);
-  assert.deepEqual(q.params.slice(12), ['2026-09-24 00:00:00', '2026-09-24 14:00:00', '2026-09-23 00:00:00', '2026-09-23 14:00:00']);
+  // hour_wise_sales: date range + exact hour bounds, current window then baseline
+  assert.deepEqual(q.params.slice(16), [
+    '2026-09-24 00:00:00', '2026-09-24 14:00:00', '2026-09-24 00:00:00', '2026-09-24 14:00:00',
+    '2026-09-23 00:00:00', '2026-09-23 14:00:00', '2026-09-23 00:00:00', '2026-09-23 14:00:00'
+  ]);
 });
 
 test('the source is chosen per window: partial today vs complete baseline days', () => {
@@ -59,7 +90,7 @@ test('the source is chosen per window: partial today vs complete baseline days',
   });
   assert.deepEqual(q.meta.salesSources, { current: 'hour_wise_sales', baseline: 'overall_summary' });
   assert.ok(q.sql.indexOf('current_sales AS') < q.sql.indexOf('baseline_sales AS'));
-  assert.deepEqual(q.params.slice(12), ['2026-09-24 00:00:00', '2026-09-24 14:00:00', '2026-08-25', '2026-09-24']);
+  assert.deepEqual(q.params.slice(16), ['2026-09-24 00:00:00', '2026-09-24 14:00:00', '2026-09-24 00:00:00', '2026-09-24 14:00:00', '2026-08-25', '2026-09-24']);
 });
 
 test('UTC ISO windows are classified in the tenant timezone', () => {
@@ -70,7 +101,7 @@ test('UTC ISO windows are classified in the tenant timezone', () => {
     baselineWindow: { start: '2026-09-22T18:30:00.000Z', end: '2026-09-23T18:30:00.000Z' }
   });
   assert.deepEqual(q.meta.salesSources, { current: 'overall_summary', baseline: 'overall_summary' });
-  assert.deepEqual(q.params.slice(12), ['2026-09-24', '2026-09-25', '2026-09-23', '2026-09-24']);
+  assert.deepEqual(q.params.slice(16), ['2026-09-24', '2026-09-25', '2026-09-23', '2026-09-24']);
 });
 
 async function runCompare(metrics, row) {
@@ -207,4 +238,15 @@ test('table numbers never wrap (a change stays with its arrow); text cells may w
   const rendered = renderEmail({ format: 'report', context: ctx, template, subject: 'R' });
   assert.match(rendered.html, /white-space:nowrap;">↓ -35\.02%<\/td>/);
   assert.match(rendered.html, /word-break:break-word;">Oud Nirvana, Oud Rocks &amp; White Oud Perfume 90 ML<\/td>/);
+});
+
+test('orders are filtered with an index-friendly created_date range plus the exact created_at bounds', () => {
+  const q = metricQuery({ tenantId: 'TMC', metrics: ['cvr', 'orders'], window, baselineWindow, timezone: 'UTC' });
+  assert.match(q.sql, /created_date >= LEFT\(\?, 10\)\s+AND created_date <= LEFT\(\?, 10\)\s+AND created_at >= \?\s+AND created_at <  \?/);
+  assert.doesNotMatch(q.sql, /created_date\s*(>=|<|<=)\s*DATE\(\?\)/);
+  // orders params follow the 8 sessions params: current window group, then baseline group
+  assert.deepEqual(q.params.slice(8, 16), [
+    '2026-09-14 00:00:00', '2026-09-15 00:00:00', '2026-09-14 00:00:00', '2026-09-15 00:00:00',
+    '2026-09-13 00:00:00', '2026-09-14 00:00:00', '2026-09-13 00:00:00', '2026-09-14 00:00:00'
+  ]);
 });

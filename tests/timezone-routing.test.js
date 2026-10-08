@@ -45,7 +45,8 @@ test('completed Asia/Kolkata days use exact Shopify product orders', () => {
   assert.match(spec.sql, /FROM shopify_orders/);
   assert.doesNotMatch(spec.sql, /FROM hourly_product_performance_rollup/);
   assert.match(spec.sql, /COUNT\(DISTINCT order_name\)/);
-  assert.match(spec.sql, /created_date >= DATE\(\?\)/);
+  assert.match(spec.sql, /created_date >= LEFT\(\?, 10\)/);
+  assert.doesNotMatch(spec.sql, /created_date\s*(>=|<|<=)\s*DATE\(\?\)/);
   assert.doesNotMatch(spec.sql, /WHERE created_at >= \?/);
   assert.deepEqual(spec.params.slice(0, 4), [
     '2026-08-01 00:00:00',
@@ -84,9 +85,14 @@ test('overall metrics use the same timezone-normalized boundaries', () => {
     window: istCurrent,
     baselineWindow: istBaseline,
   });
-  assert.deepEqual(spec.params.slice(0, 4), [
+  // sessions: current window (date range + exact hour bounds), then baseline
+  assert.deepEqual(spec.params.slice(0, 8), [
     '2026-08-01 00:00:00',
     '2026-08-02 00:00:00',
+    '2026-08-01 00:00:00',
+    '2026-08-02 00:00:00',
+    '2026-07-31 00:00:00',
+    '2026-08-01 00:00:00',
     '2026-07-31 00:00:00',
     '2026-08-01 00:00:00',
   ]);
