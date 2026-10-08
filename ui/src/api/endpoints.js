@@ -165,6 +165,22 @@ export const runApi = {
   },
 };
 
+// Workflow state engine: current incident state and its decision history.
+export const stateApi = {
+  get: async (tenantId, workflowId) => {
+    const { data } = await api.get(`/tenants/${tenantId}/workflows/${workflowId}/state`);
+    return data.state;
+  },
+
+  listEvaluations: async (tenantId, workflowId, limit = 20) => {
+    const { data } = await api.get(
+      `/tenants/${tenantId}/workflows/${workflowId}/state/evaluations`,
+      { params: { limit } }
+    );
+    return data.evaluations;
+  },
+};
+
 export const scheduleApi = {
   list: async (tenantId, workflowId) => {
     const { data } = await api.get(

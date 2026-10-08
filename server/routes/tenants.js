@@ -1,9 +1,22 @@
 const express = require('express');
 const Tenant = require('../models/Tenant');
+const { requireAdmin } = require('../middleware/auth');
 const WorkflowSchedule = require('../models/WorkflowSchedule');
 const WorkflowRun = require('../models/WorkflowRun');
 const { getNextRunAt } = require('../../scheduler/app/cronUtils');
 const { validateEmailBranding } = require('../lib/emailBranding');
+
+// Report emails format money with Intl in this currency, so it must be an ISO 4217
+// code Intl accepts (e.g. INR, USD).
+function isSupportedCurrency(currency) {
+  if (typeof currency !== 'string' || !/^[A-Z]{3}$/.test(currency)) return false;
+  try {
+    new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(0);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 function isSupportedTimeZone(timeZone) {
   try {
@@ -19,7 +32,11 @@ const router = express.Router();
 // List all tenants
 router.get('/', async (req, res, next) => {
   try {
-    const tenants = await Tenant.find({ isActive: true }).sort({ name: 1 }).lean();
+    const filter = { isActive: true };
+    if (req.user.role !== 'admin') {
+      filter.tenantId = { $in: req.user.tenantIds || [] };
+    }
+    const tenants = await Tenant.find(filter).sort({ name: 1 }).lean();
     res.json({ tenants });
   } catch (err) {
     next(err);
@@ -61,7 +78,7 @@ router.get('/:tenantId/runs', async (req, res, next) => {
 });
 
 // Create a new tenant
-router.post('/', async (req, res, next) => {
+router.post('/', requireAdmin, async (req, res, next) => {
   try {
     const { tenantId, name, description, settings } = req.body;
 
@@ -82,6 +99,9 @@ router.post('/', async (req, res, next) => {
     const resolvedSettings = settings || {};
     if (resolvedSettings.timezone && !isSupportedTimeZone(resolvedSettings.timezone)) {
       return res.status(400).json({ error: 'timezone must be a supported IANA timezone' });
+    }
+    if (resolvedSettings.currency !== undefined && !isSupportedCurrency(resolvedSettings.currency)) {
+      return res.status(400).json({ error: 'currency must be a 3-letter ISO currency code, e.g. INR' });
     }
     const brandingErrors = validateEmailBranding(resolvedSettings.emailBranding, 'settings.emailBranding');
     if (brandingErrors.length) return res.status(400).json({ errors: brandingErrors });
@@ -117,6 +137,9 @@ router.patch('/:tenantId', async (req, res, next) => {
       if (settings.timezone && !isSupportedTimeZone(settings.timezone)) {
         return res.status(400).json({ error: 'timezone must be a supported IANA timezone' });
       }
+      if (settings.currency !== undefined && !isSupportedCurrency(settings.currency)) {
+        return res.status(400).json({ error: 'currency must be a 3-letter ISO currency code, e.g. INR' });
+      }
       const brandingErrors = validateEmailBranding(settings.emailBranding, 'settings.emailBranding');
       if (brandingErrors.length) return res.status(400).json({ errors: brandingErrors });
       const currentSettings = tenant.settings?.toObject
@@ -151,7 +174,7 @@ router.patch('/:tenantId', async (req, res, next) => {
 });
 
 // Delete (deactivate) a tenant
-router.delete('/:tenantId', async (req, res, next) => {
+router.delete('/:tenantId', requireAdmin, async (req, res, next) => {
   try {
     const { tenantId } = req.params;
     const tenant = await Tenant.findOne({ tenantId });

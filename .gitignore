@@ -14,3 +14,7 @@ pnpm-debug.log*
 
 .DS_Store
 
+
+# Source of the Telegram integration, now built into the engine
+# (server/services/telegramBot.js). Kept locally for reference only.
+message_service_datum/

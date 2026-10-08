@@ -42,9 +42,14 @@ async function MessagingNode(def, context, runtime = {}) {
     const insightBinding = def.format === 'insight'
       ? resolveBinding(context, def.template?.insightSource || 'scratch.finalInsight')
       : null;
-    deliveries.telegram = await telegramSender({
-      title: rendered.subject,
-      images: await renderTelegramImages({
+    // Report pages rendered as images (server/lib/renderTelegramImage.js). The text
+    // version always goes along too, so a page that can't be rendered (e.g. a report
+    // over the renderer's row limit) degrades to a text alert instead of failing
+    // the run.
+    let images;
+    let imageError = null;
+    try {
+      images = await renderTelegramImages({
         title: rendered.subject,
         message: rendered.text,
         insight: insightBinding?.value,
@@ -52,14 +57,26 @@ async function MessagingNode(def, context, runtime = {}) {
         brandName: context?.meta?.brandName,
         workflowName: context?.meta?.workflowName,
         severity
-      }),
+      });
+    } catch (error) {
+      imageError = error.message;
+    }
+    deliveries.telegram = await telegramSender({
+      title: rendered.subject,
+      message: rendered.text,
+      ...(images && images.length ? { images } : {}),
       severity,
       users: def.telegram?.users || []
     });
+    if (imageError && deliveries.telegram) {
+      deliveries.telegram = { ...deliveries.telegram, imageFallback: imageError };
+    }
   }
 
+  // 'deferred': a state-engine workflow captured this send (server/lib/
+  // notificationCapture.js); whether it goes out is decided after the run.
   const failedChannels = Object.entries(deliveries)
-    .filter(([, delivery]) => !delivery || delivery.status !== 'sent')
+    .filter(([, delivery]) => !delivery || (delivery.status !== 'sent' && delivery.status !== 'deferred'))
     .map(([channel, delivery]) => `${channel}: ${delivery?.error || 'delivery failed'}`);
   const scratch = context.scratch || {};
   const result = {

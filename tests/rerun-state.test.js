@@ -14,7 +14,8 @@ test('reruns retain inputs but clear all derived analysis state', () => {
   const rerun = normalizeRerunContext({
     meta: {
       tenantId: 'tenant-1', timezone: 'Asia/Kolkata', window, baselineWindow: window,
-      emailBranding: { displayName: 'Old Brand', primaryColor: '#112233' }
+      emailBranding: { displayName: 'Old Brand', primaryColor: '#112233' },
+      currency: 'USD'
     },
     filters: [{ dimension: 'utm_source', operator: '=', value: 'google' }],
     metrics: { bottom_utm_sources: 'old result' },
@@ -31,6 +32,7 @@ test('reruns retain inputs but clear all derived analysis state', () => {
   assert.deepEqual(rerun.scratch, {});
   assert.deepEqual(rerun.executionTrace, []);
   assert.equal(rerun.meta.emailBranding, undefined);
+  assert.equal(rerun.meta.currency, undefined);
 });
 
 test('a later breakdown output replaces an earlier result with the same key', () => {

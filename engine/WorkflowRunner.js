@@ -125,7 +125,7 @@ class WorkflowRunner {
         ? await executor(nodeDef, context, { nodeMap, runtime })
         : nodeDef.type === 'workflow_ref'
           ? await executor(nodeDef, context, runtime)
-          : nodeDef.type === 'email' || nodeDef.type === 'messaging'
+          : nodeDef.type === 'email' || nodeDef.type === 'insight' || nodeDef.type === 'messaging'
             ? await executor(nodeDef, context, runtime)
           : await executor(nodeDef, context);
 

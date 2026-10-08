@@ -1,9 +1,6 @@
-const dns = require('dns');
-
-dns.setServers(['8.8.8.8', '1.1.1.1']);
-
 const mongoose = require('mongoose');
 require('dotenv').config();
+require('../lib/dnsOverride').applyDnsOverride();
 
 const { runLoop } = require('./infra/workerLoop');
 const { evaluateDueSchedules, recordMissedTriggers } = require('./app/schedulerService');

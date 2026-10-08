@@ -4,6 +4,7 @@ import toast from 'react-hot-toast';
 import { useCreateTenant } from '../api/hooks';
 import { useTenant } from '../context/TenantContext';
 import { Button } from './ui';
+import { CURRENCY_OPTIONS } from '../constants/currencies';
 
 export default function CreateTenantModal({ onClose }) {
   const createTenant = useCreateTenant();
@@ -131,11 +132,9 @@ export default function CreateTenantModal({ onClose }) {
                 }
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
               >
-                <option value="USD">USD - US Dollar</option>
-                <option value="EUR">EUR - Euro</option>
-                <option value="GBP">GBP - British Pound</option>
-                <option value="INR">INR - Indian Rupee</option>
-                <option value="JPY">JPY - Japanese Yen</option>
+                {CURRENCY_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
               </select>
             </div>
 

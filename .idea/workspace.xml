@@ -1,0 +1,154 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="AutoImportSettings">
+    <option name="autoReloadType" value="SELECTIVE" />
+  </component>
+  <component name="ChangeListManager">
+    <list default="true" id="896f2968-f15b-4e8f-8d3d-58fbcfa8c2fa" name="Changes" comment="">
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/package-lock.json" beforeDir="false" afterPath="$PROJECT_DIR$/package-lock.json" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/sql/QueryExecutor.js" beforeDir="false" afterPath="$PROJECT_DIR$/sql/QueryExecutor.js" afterDir="false" />
+    </list>
+    <option name="SHOW_DIALOG" value="false" />
+    <option name="HIGHLIGHT_CONFLICTS" value="true" />
+    <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
+    <option name="LAST_RESOLUTION" value="IGNORE" />
+  </component>
+  <component name="Git.Settings">
+    <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
+  </component>
+  <component name="McpProjectServerCommands">
+    <commands />
+    <urls />
+  </component>
+  <component name="NextEditCompletionFeaturesState">
+    <decayedCancelled>
+      <entry key="MS100" value="1.5672176368524044" />
+      <entry key="MS500" value="3.7007697034550384" />
+      <entry key="S2" value="10.340838479118494" />
+      <entry key="S5" value="18.124494310996145" />
+      <entry key="S10" value="23.27448575248013" />
+      <entry key="S30" value="28.05854658028875" />
+      <entry key="S60" value="29.477251965575956" />
+      <entry key="M2" value="30.225443235788674" />
+      <entry key="M5" value="31.12283862749635" />
+      <entry key="M10" value="36.89638624378905" />
+      <entry key="M15" value="50.30500701159148" />
+      <entry key="M30" value="130.02835625850568" />
+      <entry key="H1" value="327.2699461574608" />
+      <entry key="H2" value="591.7058180997918" />
+      <entry key="H4" value="821.8417750734023" />
+      <entry key="D1" value="1098.3625063124734" />
+      <entry key="W1" value="1156.0471683683752" />
+    </decayedCancelled>
+    <decayedSelected>
+      <entry key="MS100" value="0.0" />
+      <entry key="MS500" value="0.0" />
+      <entry key="S2" value="1.4448554142841842E-307" />
+      <entry key="S5" value="1.83624132004574E-123" />
+      <entry key="S10" value="4.285138644251481E-62" />
+      <entry key="S30" value="3.4993573362205495E-21" />
+      <entry key="S60" value="5.915536609227273E-11" />
+      <entry key="M2" value="7.691455419992806E-6" />
+      <entry key="M5" value="0.009305667817149496" />
+      <entry key="M10" value="0.1298755555772506" />
+      <entry key="M15" value="0.3834443104826727" />
+      <entry key="M30" value="1.4770116938850273" />
+      <entry key="H1" value="3.7472927160699716" />
+      <entry key="H2" value="6.825140674625181" />
+      <entry key="H4" value="9.62353521530564" />
+      <entry key="D1" value="13.123414878468155" />
+      <entry key="W1" value="13.870536922192908" />
+    </decayedSelected>
+    <decayedShown>
+      <entry key="MS100" value="1.482674603609025" />
+      <entry key="MS500" value="3.6584178569165022" />
+      <entry key="S2" value="10.308581410581866" />
+      <entry key="S5" value="18.101115670318592" />
+      <entry key="S10" value="23.259281074477617" />
+      <entry key="S30" value="28.052383160479497" />
+      <entry key="S60" value="29.474007414046454" />
+      <entry key="M2" value="30.22378565893459" />
+      <entry key="M5" value="31.131448529950795" />
+      <entry key="M10" value="37.025770358227476" />
+      <entry key="M15" value="50.68785784748757" />
+      <entry key="M30" value="131.50410018451302" />
+      <entry key="H1" value="331.0151824138946" />
+      <entry key="H2" value="598.5288882128099" />
+      <entry key="H4" value="831.4638027634794" />
+      <entry key="D1" value="1111.48557323938" />
+      <entry key="W1" value="1169.9176526719316" />
+    </decayedShown>
+  </component>
+  <component name="ProjectColorInfo">{
+  &quot;associatedIndex&quot;: 1,
+  &quot;fromUser&quot;: false
+}</component>
+  <component name="ProjectId" id="3JgjcaGdiqGKj4WQwSqbZklTTlE" />
+  <component name="ProjectViewState">
+    <option name="hideEmptyMiddlePackages" value="true" />
+    <option name="showLibraryContents" value="true" />
+  </component>
+  <component name="PropertiesComponent"><![CDATA[{
+  "keyToString": {
+    "Docker.Dockerfile.executor": "Run",
+    "ModuleVcsDetector.initialDetectionPerformed": "true",
+    "RunOnceActivity.MCP Project settings loaded": "true",
+    "RunOnceActivity.ShowReadmeOnStart": "true",
+    "RunOnceActivity.git.unshallow": "true",
+    "RunOnceActivity.typescript.service.memoryLimit.init": "true",
+    "codeWithMe.voiceChat.enabledByDefault": "false",
+    "git-widget-placeholder": "auth-flow",
+    "kotlin-language-version-configured": "true",
+    "node.js.detected.package.eslint": "true",
+    "node.js.detected.package.tslint": "true",
+    "node.js.selected.package.eslint": "(autodetect)",
+    "node.js.selected.package.tslint": "(autodetect)",
+    "nodejs_package_manager_path": "npm",
+    "python.packages.toolwindow.project.migrated.to.right.top.v2": "true",
+    "ts.external.directory.path": "/opt/idea/plugins/javascript-plugin/jsLanguageServicesImpl/external"
+  }
+}]]></component>
+  <component name="RunManager">
+    <configuration name="Dockerfile" type="docker-deploy" factoryName="dockerfile" temporary="true" server-name="Docker">
+      <deployment type="dockerfile">
+        <settings>
+          <option name="sourceFilePath" value="Dockerfile" />
+        </settings>
+      </deployment>
+      <method v="2" />
+    </configuration>
+    <configuration default="true" type="docker-deploy" factoryName="dockerfile" temporary="true">
+      <deployment type="dockerfile">
+        <settings />
+      </deployment>
+      <method v="2" />
+    </configuration>
+    <recent_temporary>
+      <list>
+        <item itemvalue="Docker.Dockerfile" />
+      </list>
+    </recent_temporary>
+  </component>
+  <component name="SharedIndexes">
+    <attachedChunks>
+      <set>
+        <option value="bundled-jdk-30f59d01ecdd-a203e0a19954-intellij.indexing.shared.core-IU-262.10315.125" />
+        <option value="bundled-js-predefined-d6986cc7102b-4abd2a77f808-JavaScript-IU-262.10315.125" />
+      </set>
+    </attachedChunks>
+  </component>
+  <component name="TaskManager">
+    <task active="true" id="Default" summary="Default task">
+      <changelist id="896f2968-f15b-4e8f-8d3d-58fbcfa8c2fa" name="Changes" comment="" />
+      <created>1790089688285</created>
+      <option name="number" value="Default" />
+      <option name="presentableId" value="Default" />
+      <updated>1790089688285</updated>
+    </task>
+    <servers />
+  </component>
+  <component name="TypeScriptGeneratedFilesManager">
+    <option name="version" value="3" />
+  </component>
+</project>

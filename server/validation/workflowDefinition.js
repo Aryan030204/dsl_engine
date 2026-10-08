@@ -34,12 +34,15 @@ const {
 const { validateRecipients } = require('../services/emailService');
 const { isSafeBindingPath } = require('../lib/emailBindings');
 const { validateEmailBranding } = require('../lib/emailBranding');
+const { WORKFLOW_PURPOSES } = require('../lib/stateEngine/defaults');
+const { hasNotificationTarget } = require('../lib/renderStateEmail');
 
 const EMAIL_FORMATS = new Set(['insight', 'report']);
 const REPORT_PRESETS = new Set(['performance_report_v1', 'inventory_alert_v1']);
-const REPORT_VALUE_FORMATS = new Set(['text', 'integer', 'decimal', 'percent_ratio', 'percent', 'delta_percent']);
+const REPORT_VALUE_FORMATS = new Set(['text', 'integer', 'decimal', 'percent_ratio', 'percent', 'delta_percent', 'currency']);
 const REPORT_TONES = new Set(['positive', 'negative', 'neutral']);
-const REPORT_ICONS = new Set(['metric', 'sessions', 'orders', 'conversion', 'trend']);
+const REPORT_ICONS = new Set(['metric', 'sessions', 'orders', 'conversion', 'trend', 'sales', 'aov', 'cart']);
+const MAX_REPORT_METRICS = 6;
 
 function validateBindingPath(value, label, errors) {
   if (!isSafeBindingPath(value)) errors.push(`${label} must be a safe dot-separated context path`);
@@ -75,7 +78,12 @@ function validateEmailNode(node, errors) {
   const recipients = validateRecipients(node.to);
   if (!recipients.ok) errors.push(`${prefix} recipients invalid: ${recipients.error}`);
   errors.push(...validateEmailBranding(node.branding, `${prefix} branding`));
+  validateEmailTemplate(node, prefix, errors);
+}
 
+// Shared by email and messaging nodes: both render through renderEmail, so an
+// insight or report template must pass the same checks whichever node carries it.
+function validateEmailTemplate(node, prefix, errors) {
   if (!node.template || typeof node.template !== 'object' || Array.isArray(node.template)) {
     errors.push(`${prefix} template must be an object`);
     return;
@@ -108,8 +116,8 @@ function validateEmailNode(node, errors) {
   validateBindingPath(node.template.period?.current, `${prefix} template.period.current`, errors);
   validateBindingPath(node.template.period?.comparison, `${prefix} template.period.comparison`, errors);
 
-  if (!Array.isArray(node.template.metrics) || node.template.metrics.length < 1 || node.template.metrics.length > 4) {
-    errors.push(`${prefix} template.metrics must contain one to four items`);
+  if (!Array.isArray(node.template.metrics) || node.template.metrics.length < 1 || node.template.metrics.length > MAX_REPORT_METRICS) {
+    errors.push(`${prefix} template.metrics must contain one to ${MAX_REPORT_METRICS} items`);
   } else {
     node.template.metrics.forEach((metric, index) => {
       const label = `${prefix} metric ${index + 1}`;
@@ -157,12 +165,17 @@ function validateEmailNode(node, errors) {
       rejectUnknownFields(table, new Set(['title', 'source', 'tone', 'limit', 'columns']), label, errors);
     });
   }
-  const allowed = new Set(['preset', 'eyebrow', 'title', 'description', 'period', 'metrics', 'tables']);
+  if (node.template.insightSource !== undefined) {
+    validateBindingPath(node.template.insightSource, `${prefix} template.insightSource`, errors);
+  }
+  const allowed = new Set(['preset', 'eyebrow', 'title', 'description', 'period', 'metrics', 'insightSource', 'tables']);
   Object.keys(node.template).filter((key) => !allowed.has(key)).forEach((key) => {
     errors.push(`${prefix} report template contains unsupported field ${key}`);
   });
 }
 
+// Telegram integration (ported from my-feature-branch d0fc6f9). A messaging node
+// renders like an email node and delivers to email and/or Telegram.
 function validateMessagingNode(node, errors) {
   const prefix = `messaging node ${node.id}`;
   const channels = node.channels;
@@ -179,19 +192,7 @@ function validateMessagingNode(node, errors) {
   if (!EMAIL_FORMATS.has(node.format)) errors.push(`${prefix} format must be insight or report`);
   if (typeof node.subject !== 'string' || node.subject.trim() === '') errors.push(`${prefix} subject is required`);
   validateBindingTemplate(node.subject, `${prefix} subject`, errors);
-  if (!node.template || typeof node.template !== 'object' || Array.isArray(node.template)) {
-    errors.push(`${prefix} template must be an object`);
-  } else if (node.format === 'report' && node.template.preset === 'inventory_alert_v1') {
-    ['eyebrow', 'title'].forEach((field) => {
-      if (typeof node.template[field] !== 'string' || !node.template[field].trim()) {
-        errors.push(`${prefix} inventory template.${field} is required`);
-      }
-    });
-    if (node.template.description !== undefined && typeof node.template.description !== 'string') {
-      errors.push(`${prefix} inventory template.description must be a string`);
-    }
-    rejectUnknownFields(node.template, new Set(['preset', 'eyebrow', 'title', 'description']), `${prefix} inventory template`, errors);
-  }
+  validateEmailTemplate(node, prefix, errors);
 
   if (channels.email) {
     const recipients = validateRecipients(node.email?.to);
@@ -233,6 +234,97 @@ function validateInsightDetailItem(detail, nodeId, errors, index) {
       errors.push(`insight node ${nodeId} detail ${index + 1} item ${itemIndex + 1} must be a non-empty string`);
     }
   });
+}
+
+const WORKFLOW_PURPOSE_VALUES = new Set(Object.values(WORKFLOW_PURPOSES));
+const HHMM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+const METRIC_KEY_RE = /^[a-z0-9_]+$/;
+
+function isNonNegativeInteger(value) {
+  return Number.isInteger(value) && value >= 0;
+}
+
+// workflow_purpose decides whether the state engine applies at all; state_config is
+// its per-workflow policy (docs/workflow-state-engine.md). A daily insight/report
+// workflow must send every run, so it may not enable state.
+function validateStateConfig(definition, errors) {
+  const purpose = definition.workflow_purpose;
+  if (purpose !== undefined && !WORKFLOW_PURPOSE_VALUES.has(purpose)) {
+    errors.push(`workflow_purpose must be one of ${Array.from(WORKFLOW_PURPOSE_VALUES).join('|')}`);
+  }
+
+  const config = definition.state_config;
+  if (config === undefined || config === null) return;
+  if (typeof config !== 'object' || Array.isArray(config)) {
+    errors.push('state_config must be an object');
+    return;
+  }
+  if (config.enabled !== undefined && typeof config.enabled !== 'boolean') {
+    errors.push('state_config.enabled must be a boolean');
+  }
+  if (config.enabled === true && purpose === WORKFLOW_PURPOSES.DAILY_INSIGHT) {
+    errors.push('state_config cannot be enabled for a daily_insight workflow');
+  }
+  if (config.enabled !== true) return;
+
+  const { finding, thresholds, cooldown, quiet_hours: quietHours } = config;
+
+  if (!finding || typeof finding !== 'object') {
+    errors.push('state_config.finding is required');
+  } else {
+    if (typeof finding.metric !== 'string' || !METRIC_KEY_RE.test(finding.metric)) {
+      errors.push('state_config.finding.metric must be a metric key like cvr_delta_pct');
+    }
+    if (finding.direction !== undefined) {
+      errors.push('state_config.finding.direction is no longer supported; use signed thresholds (e.g. normal -10, critical -20 for a drop)');
+    }
+  }
+
+  // Thresholds are signed metric values. Which way is worse comes from their order:
+  // critical below normal alerts on drops, critical above normal alerts on rises.
+  if (!thresholds || typeof thresholds !== 'object') {
+    errors.push('state_config.thresholds is required');
+  } else {
+    const { normal, critical } = thresholds;
+    const normalOk = typeof normal === 'number' && Number.isFinite(normal);
+    const criticalOk = typeof critical === 'number' && Number.isFinite(critical);
+    if (!normalOk) errors.push('state_config.thresholds.normal must be a number');
+    if (!criticalOk) errors.push('state_config.thresholds.critical must be a number');
+    if (normalOk && criticalOk && normal === critical) {
+      errors.push('state_config.thresholds.critical must differ from thresholds.normal');
+    }
+  }
+
+  // The state engine only knows who to notify from the workflow's own email,
+  // email-enabled insight, and messaging (email / Telegram) nodes; with none, every
+  // alert would fail to send.
+  if (!hasNotificationTarget(definition)) {
+    errors.push('state_config is enabled but no node sends a notification: turn on "Email Insight" on an insight node, or add an Email or Messaging node with recipients');
+  }
+
+  if (config.recovery !== undefined) {
+    errors.push('state_config.recovery is no longer supported; returning to normal does not send an email');
+  }
+
+  if (cooldown !== undefined) {
+    ['triggered_minutes', 'critical_minutes'].forEach((field) => {
+      if (cooldown?.[field] !== undefined && !isNonNegativeInteger(cooldown[field])) {
+        errors.push(`state_config.cooldown.${field} must be a whole number of minutes >= 0`);
+      }
+    });
+  }
+
+  if (quietHours !== undefined) {
+    if (!quietHours || typeof quietHours !== 'object') {
+      errors.push('state_config.quiet_hours must be an object');
+    } else if (quietHours.enabled === true) {
+      ['start', 'end'].forEach((field) => {
+        if (!HHMM_RE.test(String(quietHours[field] || ''))) {
+          errors.push(`state_config.quiet_hours.${field} must be HH:MM (24h)`);
+        }
+      });
+    }
+  }
 }
 
 function validateWorkflowDefinition(definition) {
@@ -279,6 +371,8 @@ function validateWorkflowDefinition(definition) {
       errors.push('trigger.brandIds must be empty for global brandScope');
     }
   }
+
+  validateStateConfig(definition, errors);
 
   const nodeIds = new Set();
   for (const node of definition.nodes) {

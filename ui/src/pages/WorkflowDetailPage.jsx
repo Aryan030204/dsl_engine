@@ -37,6 +37,8 @@ import { useEffect, useMemo, useState } from 'react';
 import RunWorkflowModal from '../components/RunWorkflowModal';
 import EditWorkflowModal from '../components/EditWorkflowModal';
 import { getWorkflowKind, getWorkflowKindLabel, getWorkflowKindStatus } from '../utils/workflowKind';
+import { getWorkflowPurpose, getWorkflowPurposeLabel, isStateEngineEnabled } from '../utils/stateConfig';
+import { WorkflowStateCard } from '../components/StateEngineViews';
 import toast from 'react-hot-toast';
 
 const SCHEDULE_WINDOW_MODES = {
@@ -332,6 +334,11 @@ export default function WorkflowDetailPage() {
                 {getWorkflowKindLabel(workflow)}
               </Badge>
             )}
+            {definition && (
+              <Badge status={getWorkflowPurpose(definition)}>
+                {getWorkflowPurposeLabel(definition)}
+              </Badge>
+            )}
           </div>
           <p className="mt-3 max-w-xl text-[15px] leading-7 text-gray-500 line-clamp-2">
             {workflowDescription}
@@ -394,6 +401,15 @@ export default function WorkflowDetailPage() {
                   </dd>
                 </div>
                 <div>
+                  <dt className="text-sm text-gray-500">Purpose</dt>
+                  <dd className="font-medium">
+                    {definition ? getWorkflowPurposeLabel(definition) : '-'}
+                    {definition && getWorkflowPurpose(definition) === 'rca' && !isStateEngineEnabled(definition) && (
+                      <span className="text-xs text-gray-500 font-normal"> (alert state off)</span>
+                    )}
+                  </dd>
+                </div>
+                <div>
                   <dt className="text-sm text-gray-500">Latest Version</dt>
                   <dd className="font-medium">v{workflow?.latestVersion}</dd>
                 </div>
@@ -408,6 +424,10 @@ export default function WorkflowDetailPage() {
               </dl>
             </CardContent>
           </Card>
+
+          {isStateEngineEnabled(definition) && (
+            <WorkflowStateCard workflowId={workflowId} definition={definition} />
+          )}
 
           <Card>
             <CardHeader>

@@ -39,7 +39,12 @@ const WorkflowRunSchema = new mongoose.Schema(
     lastError: { type: String, default: null },
     startedAt: { type: Date, required: true },
     finishedAt: { type: Date },
-    retentionExpiresAt: { type: Date, default: null }
+    retentionExpiresAt: { type: Date, default: null },
+    // Summary of the state engine's decision for this run (full record lives in
+    // workflow_state_evaluations, which outlives run pruning). A state-engine error
+    // never changes the run's own status, so it is surfaced separately here.
+    stateEvaluation: { type: mongoose.Schema.Types.Mixed, default: null },
+    stateEvaluationError: { type: String, default: null }
   },
   { timestamps: true }
 );

@@ -1,4 +1,5 @@
 const express = require('express');
+const { ingestTokenValid } = require('../middleware/auth');
 const { processEnvelope } = require('../../scheduler/app/eventSubscriberService');
 
 const router = express.Router();
@@ -9,19 +10,8 @@ const CONFIG_EVENT_TYPES = new Set([
 ]);
 const DEBUG_ALERT_EVENTS = String(process.env.DEBUG_ALERT_EVENTS || '').toLowerCase() === 'true';
 
-function getAuthToken(req) {
-  const authHeader = req.headers.authorization || '';
-  const bearerMatch = authHeader.match(/^Bearer\s+(.+)$/i);
-  if (bearerMatch) return bearerMatch[1];
-  return req.headers['x-alerts-ingest-token'] || null;
-}
-
 function assertAuthorized(req) {
-  const expected = process.env.ALERTS_INGEST_TOKEN;
-  if (!expected) return;
-
-  const provided = getAuthToken(req);
-  if (!provided || provided !== expected) {
+  if (!ingestTokenValid(req)) {
     const err = new Error('unauthorized');
     err.status = 401;
     throw err;

@@ -3,6 +3,8 @@ const crypto = require('crypto');
 const Workflow = require('../models/Workflow');
 const WorkflowVersion = require('../models/WorkflowVersion');
 const Tenant = require('../models/Tenant');
+const WorkflowState = require('../models/WorkflowState');
+const WorkflowStateEvaluation = require('../models/WorkflowStateEvaluation');
 const { validateWorkflowDefinition } = require('../validation/workflowDefinition');
 const { attachWorkflowKind, attachWorkflowKinds } = require('../lib/workflowKind');
 const {
@@ -253,6 +255,35 @@ router.delete('/:workflowId', async (req, res, next) => {
     await Workflow.deleteOne({ _id: workflow._id });
 
     res.json({ message: 'Workflow deleted successfully' });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// State engine (docs/workflow-state-engine.md): current incident state for this
+// tenant's copy of the workflow. `state: null` means it has never been evaluated.
+router.get('/:workflowId/state', async (req, res, next) => {
+  try {
+    const { tenantId, workflowId } = req.params;
+    const state = await WorkflowState.findOne({ tenantId, workflowId })
+      .select('-last_decision')
+      .lean();
+    res.json({ state: state || null });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get('/:workflowId/state/evaluations', async (req, res, next) => {
+  try {
+    const { tenantId, workflowId } = req.params;
+    const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 100);
+    const evaluations = await WorkflowStateEvaluation.find({ tenantId, workflowId })
+      .select('-decision')
+      .sort({ executed_at: -1 })
+      .limit(limit)
+      .lean();
+    res.json({ evaluations });
   } catch (err) {
     next(err);
   }

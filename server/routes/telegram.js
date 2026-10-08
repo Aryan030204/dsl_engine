@@ -1,35 +1,23 @@
 const express = require('express');
+const telegramBot = require('../services/telegramBot');
 
 const router = express.Router();
 
+// "Copy Telegram link" in the builder: issues a single-use, 10-minute t.me link that
+// links this username to whoever presses Start on it (handled by the link bot in
+// server/services/telegramBot.js). Formerly proxied to the standalone message
+// service; now done in-process.
 router.get('/link', async (req, res, next) => {
   try {
     const username = String(req.query.username || '').trim().replace(/^@/, '');
     if (!username) return res.status(400).json({ error: 'username is required' });
 
-    const serviceUrl = process.env.TELEGRAM_SERVICE_URL;
-    const secret = process.env.TELEGRAM_SERVICE_SECRET;
-    if (!serviceUrl || !secret) {
-      return res.status(503).json({ error: 'Telegram service integration is not configured' });
+    if (!telegramBot.isTelegramConfigured()) {
+      return res.status(503).json({ error: 'Telegram is not configured: set TELEGRAM_BOT_TOKEN on the server' });
     }
 
-    const linkUrl = new URL('/auth/telegram', `${serviceUrl.replace(/\/$/, '')}/`);
-    linkUrl.searchParams.set('username', username);
-    const response = await fetch(linkUrl, {
-      method: 'GET',
-      headers: { 'x-shared-secret': secret },
-      redirect: 'manual'
-    });
-
-    const location = response.headers.get('location');
-    if ((response.status < 200 || response.status >= 400) || !location) {
-      const body = await response.text();
-      return res.status(response.status || 502).json({
-        error: body || `Telegram linking service returned ${response.status}`
-      });
-    }
-
-    res.json({ username, url: location });
+    const url = await telegramBot.createLink(username);
+    res.json({ username, url });
   } catch (error) {
     next(error);
   }

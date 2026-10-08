@@ -4,6 +4,7 @@ import { format } from 'date-fns';
 import { useRun } from '../api/hooks';
 import { Badge, Card, CardHeader, CardContent, CardTitle, PageSpinner } from '../components/ui';
 import InsightDetail from '../components/InsightDetail';
+import { RunStateDecisionCard } from '../components/StateEngineViews';
 import { useState } from 'react';
 
 const formatFieldLabel = (key) => String(key)
@@ -315,6 +316,8 @@ export default function RunDetailPage() {
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         {/* Main Content */}
         <div className={`${hasSidebarContent ? 'lg:col-span-2' : 'lg:col-span-3'} min-w-0 space-y-6`}>
+          <RunStateDecisionCard run={run} />
+
           {/* Execution Trace */}
           <Card>
             <CardHeader>

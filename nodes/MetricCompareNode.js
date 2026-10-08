@@ -110,6 +110,11 @@ async function MetricCompareNode(def, context) {
     ? null
     : ((currentPrepaidOrdersNum - baselinePrepaidOrdersNum) / baselinePrepaidOrdersNum) * 100;
 
+  // Sales metrics only exist when the node asked for 'sales' or 'aov' (see
+  // metricQuery's includeSales). AOV = total sales / orders, both taken from
+  // hour_wise_sales so numerator and denominator come from the same source.
+  const salesMetrics = row.current_sales === undefined ? {} : deriveSalesMetrics(row);
+
   // --- 5. Return full ground truth (single return, complete facts) ---
   return {
     status: 'pass',
@@ -143,10 +148,34 @@ async function MetricCompareNode(def, context) {
         atc_rate_delta_pct,
         cod_orders_delta_pct,
         ppcod_orders_delta_pct,
-        prepaid_orders_delta_pct
+        prepaid_orders_delta_pct,
+        ...salesMetrics
       }
     },
     next: def.next
+  };
+}
+
+function deltaPct(current, baseline) {
+  if (current == null || baseline == null || baseline === 0) return null;
+  return ((current - baseline) / baseline) * 100;
+}
+
+function deriveSalesMetrics(row) {
+  const current_sales = Number(row.current_sales) || 0;
+  const baseline_sales = Number(row.baseline_sales) || 0;
+  const currentSalesOrders = Number(row.current_sales_orders) || 0;
+  const baselineSalesOrders = Number(row.baseline_sales_orders) || 0;
+  const current_aov = currentSalesOrders ? current_sales / currentSalesOrders : null;
+  const baseline_aov = baselineSalesOrders ? baseline_sales / baselineSalesOrders : null;
+
+  return {
+    current_sales,
+    baseline_sales,
+    current_aov,
+    baseline_aov,
+    sales_delta_pct: deltaPct(current_sales, baseline_sales),
+    aov_delta_pct: deltaPct(current_aov, baseline_aov)
   };
 }
 

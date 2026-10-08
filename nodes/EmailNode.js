@@ -27,7 +27,9 @@ async function EmailNode(def, context, runtime = {}) {
   } catch (error) {
     return { status: 'fail', reason: `EmailNode: ${error.message}` };
   }
-  if (!delivery || delivery.status !== 'sent') {
+  // 'deferred': a state-engine workflow captured this send (server/lib/
+  // notificationCapture.js); whether it goes out is decided after the run.
+  if (!delivery || (delivery.status !== 'sent' && delivery.status !== 'deferred')) {
     return { status: 'fail', reason: `EmailNode: ${delivery?.error || 'email delivery failed'}`, delivery };
   }
 

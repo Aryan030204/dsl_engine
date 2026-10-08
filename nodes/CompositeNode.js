@@ -6,6 +6,7 @@ const branchNode = require('./BranchNode');
 const insightNode = require('./InsightNode');
 const workflowRefNode = require('./WorkflowRefNode');
 const emailNode = require('./EmailNode');
+const messagingNode = require('./MessagingNode');
 
 const NodeRegistry = {
   validation: validationNode,
@@ -14,7 +15,8 @@ const NodeRegistry = {
   branch: branchNode,
   workflow_ref: workflowRefNode,
   insight: insightNode,
-  email: emailNode
+  email: emailNode,
+  messaging: messagingNode
 };
 
 async function CompositeNode(def, context, nodeMapOrOptions) {
@@ -54,7 +56,7 @@ async function CompositeNode(def, context, nodeMapOrOptions) {
       };
     }
 
-    const result = stepDef.type === 'workflow_ref' || stepDef.type === 'email'
+    const result = ['workflow_ref', 'email', 'insight', 'messaging'].includes(stepDef.type)
       ? await executor(stepDef, context, runtime)
       : await executor(stepDef, context);
 

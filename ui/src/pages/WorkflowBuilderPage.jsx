@@ -11,6 +11,7 @@ const NEW_WORKFLOW_TEMPLATE = {
   workflow_type: 'root_cause_analysis',
   description: 'New visual workflow',
   version: '1.0',
+  workflow_purpose: 'rca',
   trigger: {
     type: 'alert',
     alertType: 'cvr_drop',

@@ -7,6 +7,7 @@ import { useUnsavedChangesNavigation } from '../../context/UnsavedChangesContext
 import NodeSidebar from './NodeSidebar';
 import WorkflowCanvas from './WorkflowCanvas';
 import PropertiesPanel from './PropertiesPanel';
+import AlertStatePanel from './AlertStatePanel';
 import { jsonToGraph, graphToJson } from '../../utils/workflowTransformers';
 import {
   buildDefaultBreakdownOutputKey,
@@ -14,6 +15,7 @@ import {
 import {
   getPartialDayProductCompatibilityErrors,
 } from '../../utils/workflowValidation';
+import { getStateConfigErrors, withStateConfigDefaults } from '../../utils/stateConfig';
 
 const sanitizeIdSegment = (value) =>
   String(value || '')
@@ -425,9 +427,19 @@ function WorkflowBuilderContent({
   const handleSave = async () => {
     try {
       const workflowJson = graphToJson(nodes, edges, metadata);
+      // Rewrites a state_config saved in an older shape (direction/recovery) to the
+      // current one, even when the panel was never touched this session.
+      if (workflowJson.state_config) {
+        workflowJson.state_config = withStateConfigDefaults(workflowJson.state_config);
+      }
       const compatibilityErrors = getPartialDayProductCompatibilityErrors(workflowJson);
       if (compatibilityErrors.length) {
         toast.error(compatibilityErrors[0]);
+        return;
+      }
+      const stateConfigErrors = getStateConfigErrors(workflowJson);
+      if (stateConfigErrors.length) {
+        toast.error(stateConfigErrors[0]);
         return;
       }
       // Validate or cleanup
@@ -515,6 +527,8 @@ function WorkflowBuilderContent({
           </button>
         </div>
       </div>
+
+      <AlertStatePanel metadata={metadata} setMetadata={setMetadata} />
 
       {!isEditing && (
         <div className="bg-gray-50 border-b border-gray-200 px-4 py-3">

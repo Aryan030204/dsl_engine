@@ -1,6 +1,8 @@
 # State-Based Alerting Design
 
-Status: design proposal. Nothing in this document is implemented yet.
+Status: superseded by `docs/workflow-state-engine.md` (per-workflow
+NORMAL/TRIGGERED/CRITICAL state engine). This per-finding proposal was not
+implemented on this line; kept for background only.
 
 This document specifies the revamp of workflow notifications from run-scoped
 unconditional email into a stateful, per-finding alerting system.

@@ -1,5 +1,40 @@
 // sql/templates/metricQuery.js
-const { normalizeWindowForQuery } = require('../../lib/timeWindowUtils');
+const { normalizeWindowForQuery, isFullDayAlignedWindow } = require('../../lib/timeWindowUtils');
+
+// Sales source for one window (tenant-local "YYYY-MM-DD HH:MM:SS" bounds):
+//   - whole days (midnight to midnight) -> overall_summary, the daily rollup
+//   - anything else (e.g. today until the scheduled hour) -> hour_wise_sales
+// Decided per window, so "today vs last 30-day average" reads today from
+// hour_wise_sales and the 30 days from overall_summary. AOV's order count comes
+// from the same table as the sales it divides.
+function salesCte(name, range) {
+  if (isFullDayAlignedWindow(range.start, range.end)) {
+    return {
+      source: 'overall_summary',
+      sql: `${name} AS (
+  SELECT
+    COALESCE(SUM(total_sales), 0) AS sales,
+    COALESCE(SUM(total_orders), 0) AS orders
+  FROM overall_summary
+  WHERE date >= ?
+    AND date <  ?
+)`,
+      params: [range.start.slice(0, 10), range.end.slice(0, 10)]
+    };
+  }
+  return {
+    source: 'hour_wise_sales',
+    sql: `${name} AS (
+  SELECT
+    COALESCE(SUM(total_sales), 0) AS sales,
+    COALESCE(SUM(number_of_orders), 0) AS orders
+  FROM hour_wise_sales
+  WHERE CONCAT(date, ' ', LPAD(hour, 2, '0'), ':00:00') >= ?
+    AND CONCAT(date, ' ', LPAD(hour, 2, '0'), ':00:00') <  ?
+)`,
+    params: [range.start, range.end]
+  };
+}
 
 module.exports = function metricQuery({ tenantId, metrics = [], window, baselineWindow, timezone }) {
   if (!tenantId) throw new Error('metricQuery: tenantId is required (db selector)');
@@ -12,6 +47,12 @@ module.exports = function metricQuery({ tenantId, metrics = [], window, baseline
   const windowEnd = normalizedWindow.end;
   const baselineStart = normalizedBaselineWindow.start;
   const baselineEnd = normalizedBaselineWindow.end;
+
+  // Sales tables aren't guaranteed in every tenant database -- only query them when
+  // the workflow asks for sales or AOV.
+  const includeSales = metrics.includes('sales') || metrics.includes('aov');
+  const currentSales = includeSales ? salesCte('current_sales', normalizedWindow) : null;
+  const baselineSales = includeSales ? salesCte('baseline_sales', normalizedBaselineWindow) : null;
 
   const sql = `
 WITH
@@ -96,7 +137,9 @@ baseline_payment_orders AS (
       AND order_name IS NOT NULL
     GROUP BY order_name
   ) classified
-)
+)${includeSales ? `,
+${currentSales.sql},
+${baselineSales.sql}` : ''}
 SELECT
   cs.sessions AS current_sessions,
   bs.sessions AS baseline_sessions,
@@ -114,13 +157,20 @@ SELECT
   cpo.ppcod_orders AS current_ppcod_orders,
   bpo.ppcod_orders AS baseline_ppcod_orders,
   cpo.prepaid_orders AS current_prepaid_orders,
-  bpo.prepaid_orders AS baseline_prepaid_orders
+  bpo.prepaid_orders AS baseline_prepaid_orders${includeSales ? `,
+
+  csl.sales AS current_sales,
+  bsl.sales AS baseline_sales,
+  csl.orders AS current_sales_orders,
+  bsl.orders AS baseline_sales_orders` : ''}
 FROM current_sessions cs
 CROSS JOIN baseline_sessions bs
 CROSS JOIN current_orders co
 CROSS JOIN baseline_orders bo
 CROSS JOIN current_payment_orders cpo
-CROSS JOIN baseline_payment_orders bpo;
+CROSS JOIN baseline_payment_orders bpo${includeSales ? `
+CROSS JOIN current_sales csl
+CROSS JOIN baseline_sales bsl` : ''};
   `;
 
   const params = [
@@ -128,8 +178,11 @@ CROSS JOIN baseline_payment_orders bpo;
     baselineStart, baselineEnd,
     windowStart, windowEnd,
     baselineStart, baselineEnd,
+    // payment-type orders: current window, then baseline window
     windowStart, windowEnd,
-    baselineStart, baselineEnd
+    baselineStart, baselineEnd,
+    // optional sales: current, then baseline (dates or datetimes per salesCte)
+    ...(includeSales ? [...currentSales.params, ...baselineSales.params] : [])
   ];
 
   return {
@@ -138,7 +191,8 @@ CROSS JOIN baseline_payment_orders bpo;
     meta: {
       tenantId, // db name selector
       type: 'metric',
-      metricsRequested: metrics
+      metricsRequested: metrics,
+      salesSources: includeSales ? { current: currentSales.source, baseline: baselineSales.source } : null
     }
   };
 };

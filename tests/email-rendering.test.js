@@ -196,3 +196,34 @@ test('thrown sender errors are converted to node failures', async () => {
   assert.equal(result.status, 'fail');
   assert.match(result.reason, /connection lost/);
 });
+
+test('report can show the insight summary as a takeaway under the metric cards', () => {
+  const ctx = context({ scratch: { finalInsight: { summary: 'CVR fell -21.74% while orders moved -5.61% & <b>x</b>.' } } });
+  const template = { ...reportTemplate(), insightSource: 'scratch.finalInsight' };
+  const rendered = renderEmail({ format: 'report', context: ctx, template, subject: 'Report' });
+
+  const cardsAt = rendered.html.indexOf('Sessions');
+  const takeawayAt = rendered.html.indexOf('Key takeaway');
+  const tableAt = rendered.html.indexOf('Top sources');
+  assert.ok(cardsAt < takeawayAt && takeawayAt < tableAt);
+  assert.match(rendered.html, /<span style="font-weight:800;color:#ef2929;">-21\.74%<\/span>/);
+  assert.match(rendered.html, /&amp; &lt;b&gt;x&lt;\/b&gt;/);
+  assert.match(rendered.text, /Key takeaway: CVR fell -21\.74%/);
+});
+
+test('report without insightSource renders no takeaway, and a missing insight fails loudly', () => {
+  assert.doesNotMatch(renderEmail({ format: 'report', context: context(), template: reportTemplate(), subject: 'R' }).html, /Key takeaway/);
+  assert.throws(
+    () => renderEmail({ format: 'report', context: context(), template: { ...reportTemplate(), insightSource: 'scratch.finalInsight' }, subject: 'R' }),
+    /missing required binding: scratch\.finalInsight/
+  );
+});
+
+test('validation accepts a report insightSource and rejects an unsafe one', () => {
+  const node = (insightSource) => ({
+    id: 'mail', type: 'email', format: 'report', to: ['ops@example.com'], subject: 'Report',
+    template: { ...reportTemplate(), insightSource }
+  });
+  assert.equal(validateWorkflowDefinition(workflowWithEmail(node('scratch.finalInsight'))).ok, true);
+  assert.ok(validateWorkflowDefinition(workflowWithEmail(node('__proto__.x'))).errors.some((e) => /insightSource/.test(e)));
+});

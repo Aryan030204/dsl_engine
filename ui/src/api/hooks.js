@@ -6,7 +6,8 @@ import {
   insightApi,
   scheduleApi,
   schedulerApi,
-  triggerApi
+  triggerApi,
+  stateApi
 } from './endpoints';
 import { useTenant } from '../context/TenantContext';
 
@@ -249,6 +250,24 @@ export function useRecentRuns(limit = 50) {
   return useQuery({
     queryKey: ['recentRuns', tenantId, limit],
     queryFn: () => runApi.listRecent(tenantId, limit),
+  });
+}
+
+export function useWorkflowState(workflowId, { enabled = true } = {}) {
+  const { tenantId } = useTenant();
+  return useQuery({
+    queryKey: ['workflowState', tenantId, workflowId],
+    queryFn: () => stateApi.get(tenantId, workflowId),
+    enabled: !!workflowId && enabled,
+  });
+}
+
+export function useWorkflowStateEvaluations(workflowId, { limit = 20, enabled = true } = {}) {
+  const { tenantId } = useTenant();
+  return useQuery({
+    queryKey: ['workflowStateEvaluations', tenantId, workflowId, limit],
+    queryFn: () => stateApi.listEvaluations(tenantId, workflowId, limit),
+    enabled: !!workflowId && enabled,
   });
 }
 

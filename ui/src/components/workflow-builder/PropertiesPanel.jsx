@@ -3,6 +3,7 @@ import { X, Plus, Trash2 } from 'lucide-react';
 import SuggestionInput from '../SuggestionInput';
 import { INSIGHT_BASE_TOKENS } from '../../constants/insightTokens';
 import { getNodePartialDayProductWarnings } from '../../utils/workflowValidation';
+import api from '../../api/client';
 
 // Generate unique ID for rules
 const generateRuleId = () => `rule_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
@@ -18,6 +19,10 @@ const METRIC_OPTIONS = [
   'ppcod_orders',
   'prepaid_orders'
 ];
+
+// metric_compare can also report store-level sales and AOV (from hour_wise_sales);
+// breakdowns can't rank by them, so they're kept out of METRIC_OPTIONS.
+const COMPARE_METRIC_OPTIONS = [...METRIC_OPTIONS, 'sales', 'aov'];
 
 const RANK_BY_OPTIONS = [
   { value: 'delta', label: 'Delta (default)' },
@@ -43,14 +48,22 @@ const MIN_SESSIONS_MODE_OPTIONS = [
   { value: 'baseline_only', label: 'Require baseline only' }
 ];
 
+// Spells out how the two floors combine, since "both low" keeps a row that is low
+// in only one window (e.g. 151 now vs 547 before with both floors at 500).
+const MIN_SESSIONS_MODE_HINTS = {
+  both_low: 'Kept unless current AND baseline sessions are both below their minimums.',
+  either_low: 'Kept only if current and baseline sessions both meet their minimums.',
+  baseline_only: 'Only the baseline minimum applies; current sessions are ignored.'
+};
+
 const BREAKDOWN_INPUT_SCOPE_OPTIONS = [
   { value: 'global', label: 'Global' },
   { value: 'breakdown', label: 'From Breakdown' }
 ];
 
-const EMAIL_VALUE_FORMATS = ['text', 'integer', 'decimal', 'percent_ratio', 'percent', 'delta_percent'];
+const EMAIL_VALUE_FORMATS = ['text', 'integer', 'decimal', 'percent_ratio', 'percent', 'delta_percent', 'currency'];
 const EMAIL_TABLE_TONES = ['positive', 'negative', 'neutral'];
-const EMAIL_METRIC_ICONS = ['metric', 'sessions', 'orders', 'conversion', 'trend'];
+const EMAIL_METRIC_ICONS = ['metric', 'sessions', 'orders', 'conversion', 'trend', 'sales', 'aov', 'cart'];
 
 const createDefaultReportTemplate = () => ({
   preset: 'performance_report_v1',
@@ -113,6 +126,8 @@ const BRANCH_METRIC_OPTIONS = [
   'cvr_delta_pct',
   'atc_rate_delta_pct',
   'atc_sessions_delta_pct',
+  'sales_delta_pct',
+  'aov_delta_pct',
   'current_orders',
   'baseline_orders',
   'current_cod_orders',
@@ -159,7 +174,7 @@ function MetricMultiSelect({ value, onChange, placeholder }) {
   const [isOpen, setIsOpen] = useState(false);
   const [isFocused, setIsFocused] = useState(false);
   const normalizedValue = Array.isArray(value) ? value : [];
-  const available = METRIC_OPTIONS.filter((m) => !normalizedValue.includes(m));
+  const available = COMPARE_METRIC_OPTIONS.filter((m) => !normalizedValue.includes(m));
   const suggestions = inputValue
     ? available.filter((m) => m.startsWith(inputValue.toLowerCase()))
     : available;
@@ -178,7 +193,7 @@ function MetricMultiSelect({ value, onChange, placeholder }) {
     if (e.key === 'Enter' || e.key === ',') {
       e.preventDefault();
       const trimmed = inputValue.trim().toLowerCase();
-      if (METRIC_OPTIONS.includes(trimmed)) {
+      if (COMPARE_METRIC_OPTIONS.includes(trimmed)) {
         addMetric(trimmed);
       }
     }
@@ -257,7 +272,7 @@ function MetricMultiSelect({ value, onChange, placeholder }) {
         )}
       </div>
       <div className="text-[10px] text-gray-400">
-        Supported: {METRIC_OPTIONS.join(', ')}
+        Supported: {COMPARE_METRIC_OPTIONS.join(', ')}
       </div>
     </div>
   );
@@ -431,6 +446,7 @@ function formatTelegramRecipients(value) {
   return value.map((user) => user?.telegramChatId || user?.username || '').filter(Boolean).join(', ');
 }
 
+// Numeric entries are chat IDs; anything else is a Telegram username (leading @ optional).
 function parseTelegramRecipients(value) {
   return String(value || '')
     .split(',')
@@ -484,6 +500,24 @@ export default function PropertiesPanel({
     const newData = { ...data, [field]: value };
     setData(newData);
     onChange(selectedNode.id, newData);
+  };
+  // Current/baseline floors fall back to the legacy stop_conditions.min_sessions on
+  // the server. The first edit writes both floors explicitly and drops the legacy
+  // field, so what the panel shows is exactly what runs.
+  const handleMinSessionsChange = (field, value) => {
+    const next = { ...(data.stop_conditions || {}) };
+    if (next.min_sessions !== undefined) {
+      if (next.min_current_sessions === undefined) next.min_current_sessions = next.min_sessions;
+      if (next.min_baseline_sessions === undefined) next.min_baseline_sessions = next.min_sessions;
+      delete next.min_sessions;
+    }
+    if (value === '' || value === null || value === undefined) {
+      delete next[field];
+    } else {
+      const parsed = parseFloat(value);
+      next[field] = Number.isNaN(parsed) ? value : parsed;
+    }
+    handleChange('stop_conditions', next);
   };
   const handleStopConditionChange = (field, value, parseFn) => {
     const current = data.stop_conditions || {};
@@ -551,9 +585,25 @@ export default function PropertiesPanel({
           tables[tableIndex] = { ...tables[tableIndex], columns };
           updateReportTemplate('tables', tables);
         };
+        const isMessaging = data.type === 'messaging';
+        const copyTelegramLink = async () => {
+          const username = parseTelegramRecipients(telegramRecipientsInput)
+            .find((user) => user.username)?.username;
+          if (!username) {
+            window.alert('Enter a Telegram username first.');
+            return;
+          }
+          try {
+            const { data: body } = await api.get('/telegram/link', { params: { username } });
+            await navigator.clipboard.writeText(body.url);
+            window.alert('Telegram link copied. Send it to the recipient.');
+          } catch (error) {
+            window.alert(error.response?.data?.error || error.message || 'Could not create Telegram link.');
+          }
+        };
         return (
           <div className="space-y-4">
-            {selectedNode.type === 'email' && data.type === 'messaging' && (
+            {isMessaging && (
               <div className="space-y-2 pb-3 border-b">
                 <div className="text-xs font-semibold text-gray-700">Messaging Channels</div>
                 {['email', 'telegram'].map((channel) => (
@@ -590,14 +640,13 @@ export default function PropertiesPanel({
               </select>
             </div>
 
-            {selectedNode.type === 'email' && (
             <div>
               <label className="block text-xs font-medium text-gray-500 mb-1">Recipients</label>
               <input
                 value={emailRecipientsInput}
                 onChange={(e) => {
                   setEmailRecipientsInput(e.target.value);
-                  if (data.type === 'messaging') {
+                  if (isMessaging) {
                     handleChange('email', { ...(data.email || {}), to: parseEmailRecipients(e.target.value) });
                     return;
                   }
@@ -607,8 +656,7 @@ export default function PropertiesPanel({
                 className="w-full border p-2 rounded text-sm"
               />
             </div>
-            )}
-            {selectedNode.type === 'email' && data.type === 'messaging' && (
+            {isMessaging && (
               <div>
                 <label className="block text-xs font-medium text-gray-500 mb-1">Telegram Users</label>
                 <input
@@ -622,27 +670,8 @@ export default function PropertiesPanel({
                 />
                 <button
                   type="button"
-                  onClick={async () => {
-                    const username = parseTelegramRecipients(telegramRecipientsInput)
-                      .find((user) => user.username)?.username;
-                    if (!username) {
-                      window.alert('Enter a Telegram username first.');
-                      return;
-                    }
-                    try {
-                      const response = await fetch(`/api/telegram/link?username=${encodeURIComponent(username)}`);
-                      const body = await response.json();
-                      if (!response.ok) {
-                        window.alert(body.error || 'Could not create Telegram link.');
-                        return;
-                      }
-                      await navigator.clipboard.writeText(body.url);
-                      window.alert('Telegram link copied. Send it to the recipient.');
-                    } catch (error) {
-                      window.alert(error.message || 'Could not copy the Telegram link.');
-                    }
-                  }}
-                  className="w-full border border-cyan-200 text-cyan-700 p-2 rounded text-sm hover:bg-cyan-50"
+                  onClick={copyTelegramLink}
+                  className="w-full border border-cyan-200 text-cyan-700 p-2 rounded text-sm hover:bg-cyan-50 mt-2"
                 >
                   Copy Telegram link
                 </button>
@@ -703,8 +732,32 @@ export default function PropertiesPanel({
                   </>}
                 </div>
 
-                {reportTemplate.preset !== 'inventory_alert_v1' && <div className="space-y-3 pt-3 border-t">
-                  <div className="flex justify-between items-center"><span className="text-xs font-semibold text-gray-700">Metric Cards</span><button type="button" disabled={(reportTemplate.metrics || []).length >= 4} onClick={() => updateReportTemplate('metrics', [...(reportTemplate.metrics || []), { label: 'Metric', value: 'metrics.current_sessions', change: 'metrics.sessions_delta_pct', format: 'integer', icon: 'metric' }])} className="text-xs text-blue-600 disabled:text-gray-300"><Plus className="inline w-3 h-3" /> Add</button></div>
+                <div className="space-y-2 pt-3 border-t">
+                  <label className="flex items-center gap-2 text-xs font-semibold text-gray-700">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(reportTemplate.insightSource)}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          updateReportTemplate('insightSource', 'scratch.finalInsight');
+                        } else {
+                          const { insightSource, ...rest } = reportTemplate;
+                          handleChange('template', rest);
+                        }
+                      }}
+                    />
+                    Show insight takeaway
+                  </label>
+                  {reportTemplate.insightSource && (
+                    <>
+                      <input value={reportTemplate.insightSource} onChange={(e) => updateReportTemplate('insightSource', e.target.value)} placeholder="scratch.finalInsight" className="w-full border p-2 rounded text-sm font-mono" />
+                      <div className="text-[10px] text-gray-400">Shows the insight node's summary under the metric cards. Place this email after the insight node.</div>
+                    </>
+                  )}
+                </div>
+
+                <div className="space-y-3 pt-3 border-t">
+                  <div className="flex justify-between items-center"><span className="text-xs font-semibold text-gray-700">Metric Cards</span><button type="button" disabled={(reportTemplate.metrics || []).length >= 6} onClick={() => updateReportTemplate('metrics', [...(reportTemplate.metrics || []), { label: 'Metric', value: 'metrics.current_sessions', change: 'metrics.sessions_delta_pct', format: 'integer', icon: 'metric' }])} className="text-xs text-blue-600 disabled:text-gray-300"><Plus className="inline w-3 h-3" /> Add</button></div>
                   {(reportTemplate.metrics || []).map((metric, index) => (
                     <div key={index} className="border rounded p-2 space-y-2 bg-gray-50">
                       <div className="flex gap-2"><input value={metric.label || ''} onChange={(e) => updateMetric(index, 'label', e.target.value)} placeholder="Label" className="min-w-0 flex-1 border p-1 rounded text-xs" /><button type="button" disabled={(reportTemplate.metrics || []).length <= 1} onClick={() => updateReportTemplate('metrics', reportTemplate.metrics.filter((_, idx) => idx !== index))} className="text-red-500 disabled:text-gray-300"><Trash2 className="w-4 h-4" /></button></div>
@@ -1546,6 +1599,9 @@ export default function PropertiesPanel({
                                   <option key={opt.value} value={opt.value}>{opt.label}</option>
                               ))}
                           </select>
+                          <p className="text-[11px] text-gray-400 mt-1">
+                              {MIN_SESSIONS_MODE_HINTS[data.min_sessions_mode || 'both_low']}
+                          </p>
                      </div>
                      <div>
                           <label className="block text-xs font-medium text-gray-500 mb-1">Input Scope</label>
@@ -1617,25 +1673,14 @@ export default function PropertiesPanel({
                                   />
                               </div>
                               <div>
-                                  <label className="block text-[11px] font-medium text-gray-500 mb-1">Min Sessions (default)</label>
-                                  <input
-                                      type="number"
-                                      min="0"
-                                      className="w-full border text-sm p-1 rounded"
-                                      value={data.stop_conditions?.min_sessions ?? ''}
-                                      onChange={(e) => handleStopConditionChange('min_sessions', e.target.value, (v) => parseFloat(v))}
-                                      placeholder="50"
-                                  />
-                              </div>
-                              <div>
                                   <label className="block text-[11px] font-medium text-gray-500 mb-1">Min Current Sessions</label>
                                   <input
                                       type="number"
                                       min="0"
                                       className="w-full border text-sm p-1 rounded"
-                                      value={data.stop_conditions?.min_current_sessions ?? ''}
-                                      onChange={(e) => handleStopConditionChange('min_current_sessions', e.target.value, (v) => parseFloat(v))}
-                                      placeholder="50"
+                                      value={data.stop_conditions?.min_current_sessions ?? data.stop_conditions?.min_sessions ?? ''}
+                                      onChange={(e) => handleMinSessionsChange('min_current_sessions', e.target.value)}
+                                      placeholder="0"
                                   />
                               </div>
                               <div>
@@ -1644,9 +1689,9 @@ export default function PropertiesPanel({
                                       type="number"
                                       min="0"
                                       className="w-full border text-sm p-1 rounded"
-                                      value={data.stop_conditions?.min_baseline_sessions ?? ''}
-                                      onChange={(e) => handleStopConditionChange('min_baseline_sessions', e.target.value, (v) => parseFloat(v))}
-                                      placeholder="50"
+                                      value={data.stop_conditions?.min_baseline_sessions ?? data.stop_conditions?.min_sessions ?? ''}
+                                      onChange={(e) => handleMinSessionsChange('min_baseline_sessions', e.target.value)}
+                                      placeholder="0"
                                   />
                               </div>
                               <div>

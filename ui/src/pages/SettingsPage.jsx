@@ -4,6 +4,7 @@ import { useTenant } from '../context/TenantContext';
 import { useTenants, useDeleteTenant, useUpdateTenant } from '../api/hooks';
 import { Card, CardHeader, CardContent, CardTitle, Button, Badge, PageSpinner } from '../components/ui';
 import CreateTenantModal from '../components/CreateTenantModal';
+import { CURRENCY_OPTIONS } from '../constants/currencies';
 import toast from 'react-hot-toast';
 
 const TIMEZONE_OPTIONS = [
@@ -23,6 +24,7 @@ export default function SettingsPage() {
   const updateTenant = useUpdateTenant();
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [timezoneDrafts, setTimezoneDrafts] = useState({});
+  const [currencyDrafts, setCurrencyDrafts] = useState({});
   const [brandingDrafts, setBrandingDrafts] = useState({});
 
   const handleDeleteTenant = async (tid) => {
@@ -59,6 +61,26 @@ export default function SettingsPage() {
       toast.success(`Timezone updated for '${tenant.tenantId}'`);
     } catch (err) {
       toast.error(err.response?.data?.error || 'Failed to update tenant timezone');
+    }
+  };
+
+  const getDraftCurrency = (tenant) => currencyDrafts[tenant.tenantId] ?? tenant.settings?.currency ?? 'USD';
+
+  const handleSaveCurrency = async (tenant) => {
+    const nextCurrency = getDraftCurrency(tenant);
+    try {
+      await updateTenant.mutateAsync({
+        tenantId: tenant.tenantId,
+        updates: {
+          settings: {
+            ...(tenant.settings || {}),
+            currency: nextCurrency
+          }
+        }
+      });
+      toast.success(`Currency updated for '${tenant.tenantId}'`);
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to update tenant currency');
     }
   };
 
@@ -167,6 +189,36 @@ export default function SettingsPage() {
                         >
                           <Save className="w-4 h-4 mr-1" />
                           Save Timezone
+                        </Button>
+                      </div>
+                      <div className="mt-3 flex items-end gap-2">
+                        <div>
+                          <label className="block text-xs text-gray-500 mb-1">Currency</label>
+                          <select
+                            value={getDraftCurrency(tenant)}
+                            onChange={(e) => setCurrencyDrafts((prev) => ({
+                              ...prev,
+                              [tenant.tenantId]: e.target.value
+                            }))}
+                            className="h-9 border border-gray-300 rounded-lg px-3 text-sm bg-white"
+                          >
+                            {/* Keep an unlisted saved code selectable rather than silently showing another. */}
+                            {!CURRENCY_OPTIONS.some((option) => option.value === getDraftCurrency(tenant)) && (
+                              <option value={getDraftCurrency(tenant)}>{getDraftCurrency(tenant)}</option>
+                            )}
+                            {CURRENCY_OPTIONS.map((option) => (
+                              <option key={option.value} value={option.value}>{option.label}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => handleSaveCurrency(tenant)}
+                          loading={updateTenant.isPending}
+                        >
+                          <Save className="w-4 h-4 mr-1" />
+                          Save Currency
                         </Button>
                       </div>
                       <div className="mt-4 border-t border-gray-200 pt-3">

@@ -17,6 +17,15 @@ const statusStyles = {
   global: 'bg-purple-100 text-purple-800',
   multi_tenant: 'bg-blue-100 text-blue-800',
   single_tenant: 'bg-slate-100 text-slate-800',
+  // workflow state engine
+  normal: 'bg-green-100 text-green-800',
+  triggered: 'bg-amber-100 text-amber-800',
+  critical: 'bg-red-100 text-red-800',
+  sent: 'bg-green-100 text-green-800',
+  suppressed: 'bg-gray-100 text-gray-700',
+  uncertain: 'bg-orange-100 text-orange-800',
+  rca: 'bg-sky-100 text-sky-800',
+  daily_insight: 'bg-teal-100 text-teal-800',
 };
 
 export default function Badge({ status, children, className }) {
