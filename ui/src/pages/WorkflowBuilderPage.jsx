@@ -93,7 +93,7 @@ export default function WorkflowBuilderPage() {
               : workflowData?.version?.definitionJson;
             return {
               ...(definition || NEW_WORKFLOW_TEMPLATE),
-              ...(!requestedVersion && workflowData?.workflow?.name
+              ...(workflowData?.workflow?.name
                 ? { name: workflowData.workflow.name }
                 : {})
             };

@@ -103,11 +103,12 @@ function WorkflowBuilderContent({
   useEffect(() => {
     if (initialData) {
       const { nodes: flowNodes, edges: flowEdges } = jsonToGraph(initialData);
+      setMetadata(initialData);
       setNodes(flowNodes);
       setEdges(flowEdges);
       setHasUnsavedChanges(false);
     }
-  }, [initialData, setNodes, setEdges]);
+  }, [initialData, setMetadata, setNodes, setEdges, setHasUnsavedChanges]);
 
   useEffect(() => {
     if (!hasUnsavedChanges) return undefined;
