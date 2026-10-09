@@ -211,6 +211,12 @@ export default function WorkflowBuilderPage() {
         } else {
           await createVersion.mutateAsync(workflowJson);
         }
+        // Saving from a version-specific URL creates a new latest version. Leave
+        // the historical version view so the editor does not reload the older
+        // definition and discard the just-saved node changes from view.
+        if (requestedVersion) {
+          navigate(`/workflows/${workflowId}/edit/visual`, { replace: true });
+        }
         toast.success('Changes saved');
         return true;
       } else {
