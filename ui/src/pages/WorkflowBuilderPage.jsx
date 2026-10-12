@@ -1,9 +1,10 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { WorkflowBuilder, PageSpinner } from '../components';
 import { useWorkflow, useWorkflowVersions, useWorkflows, useCreateGlobalWorkflow, useCreateWorkflowForTenants, useCreateWorkflowVersion, useCreateGlobalWorkflowVersion, useTenants } from '../api/hooks';
 import { workflowApi } from '../api/endpoints';
 import { useTenant } from '../context/TenantContext';
+import { useUnsavedChangesNavigation } from '../context/UnsavedChangesContext';
 import toast from 'react-hot-toast';
 
 const NEW_WORKFLOW_TEMPLATE = {
@@ -64,6 +65,14 @@ export default function WorkflowBuilderPage() {
   const [selectedTenantIds, setSelectedTenantIds] = useState([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [jobProgress, setJobProgress] = useState(null);
+  const [switchToLatestAfterSave, setSwitchToLatestAfterSave] = useState(false);
+  const { hasUnsavedChanges } = useUnsavedChangesNavigation();
+
+  useEffect(() => {
+    if (!switchToLatestAfterSave || hasUnsavedChanges) return;
+    setSwitchToLatestAfterSave(false);
+    navigate(`/workflows/${workflowId}/edit/visual`, { replace: true });
+  }, [switchToLatestAfterSave, hasUnsavedChanges, navigate, workflowId]);
 
   // Hooks for fetching (if editing)
   const { data: workflowData, isLoading: workflowLoading, error: workflowError } = useWorkflow(workflowId);
@@ -211,11 +220,10 @@ export default function WorkflowBuilderPage() {
         } else {
           await createVersion.mutateAsync(workflowJson);
         }
-        // Saving from a version-specific URL creates a new latest version. Leave
-        // the historical version view so the editor does not reload the older
-        // definition and discard the just-saved node changes from view.
         if (requestedVersion) {
-          navigate(`/workflows/${workflowId}/edit/visual`, { replace: true });
+          // Wait for the builder to clear its unsaved state before switching
+          // away from the historical version URL.
+          setSwitchToLatestAfterSave(true);
         }
         toast.success('Changes saved');
         return true;
