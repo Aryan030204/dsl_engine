@@ -66,7 +66,7 @@ export default function WorkflowBuilderPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [jobProgress, setJobProgress] = useState(null);
   const [switchToLatestAfterSave, setSwitchToLatestAfterSave] = useState(false);
-  const { hasUnsavedChanges } = useUnsavedChangesNavigation();
+  const { hasUnsavedChanges, setHasUnsavedChanges } = useUnsavedChangesNavigation();
 
   useEffect(() => {
     if (!switchToLatestAfterSave || hasUnsavedChanges) return;
@@ -183,7 +183,7 @@ export default function WorkflowBuilderPage() {
       const successCount = result.successes.length;
       const successLabel = successCount === 1 ? 'tenant' : 'tenant(s)';
       toast.success(`Workflow created for ${successCount} ${successLabel}`);
-      return null;
+      return { bulkCreated: true };
     } finally {
       setIsSubmitting(false);
       setJobProgress(null);
@@ -235,14 +235,21 @@ export default function WorkflowBuilderPage() {
         const result = scope === 'global'
           ? await createGlobalWorkflowDefinition(workflowJson)
           : await createWorkflowsForTenants(workflowJson, resolvedTenantIds);
+        // The save succeeded, so clear the dirty flag before navigating or the
+        // unsaved-changes prompt would block our own redirect.
         if (result?.workflow?.workflowId) {
           toast.success('Workflow created successfully');
+          setHasUnsavedChanges(false);
           navigate(`/workflows/${result.workflow.workflowId}`);
           return true;
-        } else if (result === null) {
-          navigate('/workflows');
-          return false;
         }
+        if (result?.bulkCreated) {
+          setHasUnsavedChanges(false);
+          navigate('/workflows');
+          return true;
+        }
+        // Nothing was created (e.g. no tenant selected, all failed): stay on the
+        // editor so the user keeps their work.
         return false;
       }
     } catch (err) {
@@ -309,6 +316,7 @@ export default function WorkflowBuilderPage() {
           tenantsLoading={tenantsLoading}
           currentTenantId={tenantId}
           isSaving={isSubmitting || createVersion.isPending || createGlobalVersion.isPending}
+          allowSaveWithoutChanges={Boolean(requestedVersion)}
         />
       )}
     </div>

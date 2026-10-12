@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes, useBlocker } from 'react-router-dom';
-import { useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { UnsavedChangesContext } from './context/UnsavedChangesContext';
+import { shouldBlockNavigation } from './utils/unsavedChanges';
 import Layout from './components/Layout';
 import WorkflowsPage from './pages/WorkflowsPage';
 import WorkflowDetailPage from './pages/WorkflowDetailPage';
@@ -17,8 +18,19 @@ import { useAuth } from './context/AuthContext';
 
 function App() {
   const { user, loading } = useAuth();
-  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
-  const blocker = useBlocker(hasUnsavedChanges);
+  const [hasUnsavedChanges, setHasUnsavedChangesState] = useState(false);
+  // The ref is updated synchronously so a navigation fired right after a save sees the
+  // cleared flag instead of the previous render's state.
+  const hasUnsavedChangesRef = useRef(false);
+  const setHasUnsavedChanges = useCallback((value) => {
+    hasUnsavedChangesRef.current = Boolean(value);
+    setHasUnsavedChangesState(Boolean(value));
+  }, []);
+  const blocker = useBlocker(({ currentLocation, nextLocation }) => shouldBlockNavigation({
+    isDirty: hasUnsavedChangesRef.current,
+    currentPathname: currentLocation.pathname,
+    nextPathname: nextLocation.pathname,
+  }));
 
   if (loading) {
     return (
