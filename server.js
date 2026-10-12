@@ -1,9 +1,15 @@
+const dns = require("dns");
+
+// Force Node.js to use public DNS instead of the local 127.0.0.1 resolver
+dns.setServers(["8.8.8.8", "1.1.1.1"]);
+
+console.log("Node DNS servers:", dns.getServers());
+
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
 require('dotenv').config();
-require('./lib/dnsOverride').applyDnsOverride();
 
 const authRoutes = require('./server/routes/auth');
 const workflowRoutes = require('./server/routes/workflows');

@@ -55,6 +55,10 @@ function WorkflowBuilderContent({
   const [metadata, setMetadata] = useState(initialData || {});
   const [isAttachingWorkflowRef, setIsAttachingWorkflowRef] = useState(false);
   const { hasUnsavedChanges, setHasUnsavedChanges, blocker } = useUnsavedChangesNavigation();
+  const updateMetadataWithDirtyState = useCallback((update) => {
+    setMetadata(update);
+    setHasUnsavedChanges(true);
+  }, [setHasUnsavedChanges]);
   const workflowImportOptionMap = useMemo(
     () => new Map((workflowImportOptions || []).map((item) => [item.workflowId, item])),
     [workflowImportOptions]
@@ -103,11 +107,12 @@ function WorkflowBuilderContent({
   useEffect(() => {
     if (initialData) {
       const { nodes: flowNodes, edges: flowEdges } = jsonToGraph(initialData);
+      setMetadata(initialData);
       setNodes(flowNodes);
       setEdges(flowEdges);
       setHasUnsavedChanges(false);
     }
-  }, [initialData, setNodes, setEdges]);
+  }, [initialData, setMetadata, setNodes, setEdges, setHasUnsavedChanges]);
 
   useEffect(() => {
     if (!hasUnsavedChanges) return undefined;
@@ -528,7 +533,7 @@ function WorkflowBuilderContent({
         </div>
       </div>
 
-      <AlertStatePanel metadata={metadata} setMetadata={setMetadata} />
+      <AlertStatePanel metadata={metadata} setMetadata={updateMetadataWithDirtyState} />
 
       {!isEditing && (
         <div className="bg-gray-50 border-b border-gray-200 px-4 py-3">

@@ -1,5 +1,5 @@
 import { useParams, Link } from 'react-router-dom';
-import { ArrowLeft, Clock, CheckCircle, XCircle, AlertCircle } from 'lucide-react';
+import { ArrowLeft, CheckCircle, XCircle, AlertCircle } from 'lucide-react';
 import { format } from 'date-fns';
 import { useRun } from '../api/hooks';
 import { Badge, Card, CardHeader, CardContent, CardTitle, PageSpinner } from '../components/ui';
@@ -112,58 +112,6 @@ export default function RunDetailPage() {
     if (diffMs < 60000) return `${(diffMs / 1000).toFixed(2)}s`;
     return `${(diffMs / 60000).toFixed(2)}m`;
   };
-  const truncate = (text, max = 200) => {
-    if (!text || typeof text !== 'string') return '';
-    if (text.length <= max) return text;
-    return `${text.slice(0, max - 1)}…`;
-  };
-  const renderRankedList = (text) => {
-    if (!text || typeof text !== 'string') return null;
-    const lines = text.split('\n').filter(Boolean);
-    if (!lines.length || !lines.every((line) => /^\d+\.\s+/.test(line))) return null;
-
-    return (
-      <ol className="list-decimal list-inside space-y-1">
-        {lines.map((line, idx) => {
-          const content = line.replace(/^\d+\.\s+/, '');
-          const parts = content.split(' | ').map((part) => part.trim()).filter(Boolean);
-          const [title, ...rest] = parts;
-          return (
-            <li key={idx}>
-              <span>{truncate(title, 140)}</span>
-              {rest.length > 0 && (
-                <ul className="list-disc list-inside ml-4 mt-0.5 space-y-0.5">
-                  {rest.map((item, itemIdx) => (
-                    <li key={itemIdx}>{truncate(item, 160)}</li>
-                  ))}
-                </ul>
-              )}
-            </li>
-          );
-        })}
-      </ol>
-    );
-  };
-  const formatMetricValue = (key, value) => {
-    if (typeof value !== 'number') {
-      return renderRankedList(value) || truncate(String(value), 200);
-    }
-
-    if (
-      key === 'current_cvr'
-      || key === 'baseline_cvr'
-      || key === 'current_atc_rate'
-      || key === 'baseline_atc_rate'
-    ) {
-      return `${(value * 100).toFixed(2)}%`;
-    }
-
-    if (key.endsWith('_delta_pct')) {
-      return `${value.toFixed(2)}%`;
-    }
-
-    return value.toFixed(2);
-  };
   const formatMetaValue = (key, value) => {
     if (value == null) return '';
 
@@ -218,19 +166,6 @@ export default function RunDetailPage() {
       .at(-1)
     || null;
   const hasSidebarContent = Boolean(run?.context?.meta || finalInsight || finalInsightMeta || finalInsightEmail);
-  const metricGroups = Object.entries(run?.metrics || {}).reduce((groups, [key, value]) => {
-    const normalizedKey = key.toLowerCase();
-    const group = normalizedKey.includes('order')
-      ? 'Orders'
-      : normalizedKey.includes('session')
-        ? 'Sessions and activity'
-        : normalizedKey.includes('cvr') || normalizedKey.includes('rate')
-          ? 'Conversion rates'
-          : 'Breakdowns and other metrics';
-    (groups[group] ||= []).push([key, value]);
-    return groups;
-  }, {});
-
   return (
     <div>
       {/* Back Link */}
@@ -284,76 +219,10 @@ export default function RunDetailPage() {
         </CardContent>
       </Card>
 
-      {Object.keys(metricGroups).length > 0 && (
-        <Card className="mb-6">
-          <CardHeader>
-            <CardTitle>Run Metrics</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-6">
-            {Object.entries(metricGroups).map(([group, entries]) => (
-              <section key={group}>
-                <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-gray-500">
-                  {group}
-                </h2>
-                <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                  {entries.map(([key, value]) => (
-                    <div key={key} className="min-w-0 rounded-lg border border-gray-200 bg-gray-50 p-4">
-                      <dt className="mb-2 text-xs font-medium uppercase tracking-wide text-gray-500">
-                        {formatFieldLabel(key)}
-                      </dt>
-                      <dd className="break-words text-sm font-semibold text-gray-900">
-                        {formatMetricValue(key, value)}
-                      </dd>
-                    </div>
-                  ))}
-                </dl>
-              </section>
-            ))}
-          </CardContent>
-        </Card>
-      )}
-
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         {/* Main Content */}
         <div className={`${hasSidebarContent ? 'lg:col-span-2' : 'lg:col-span-3'} min-w-0 space-y-6`}>
           <RunStateDecisionCard run={run} />
-
-          {/* Execution Trace */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center">
-                <Clock className="w-4 h-4 mr-2" />
-                Execution Trace ({run?.executionTrace?.length || 0} steps)
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              {run?.executionTrace?.length === 0 ? (
-                <p className="text-sm text-gray-500">No execution trace available</p>
-              ) : (
-                <div className="space-y-2">
-                  {run?.executionTrace?.map((step, idx) => (
-                    <div
-                      key={idx}
-                      className="flex items-center p-3 bg-gray-50 rounded-lg border border-gray-200"
-                    >
-                      <span className="w-6 h-6 bg-green-100 text-green-700 rounded-full flex items-center justify-center text-xs font-medium mr-3">
-                        {idx + 1}
-                      </span>
-                      <div className="flex-1">
-                        <p className="font-medium text-gray-900">
-                          {typeof step === 'string' ? step : step.nodeId || step.id}
-                        </p>
-                        {step.type && (
-                          <p className="text-sm text-gray-500">{step.type}</p>
-                        )}
-                      </div>
-                      <CheckCircle className="w-4 h-4 text-green-500" />
-                    </div>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
 
           {/* Node Outputs */}
           <Card>

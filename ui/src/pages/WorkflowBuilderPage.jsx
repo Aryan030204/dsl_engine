@@ -1,9 +1,10 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { WorkflowBuilder, PageSpinner } from '../components';
 import { useWorkflow, useWorkflowVersions, useWorkflows, useCreateGlobalWorkflow, useCreateWorkflowForTenants, useCreateWorkflowVersion, useCreateGlobalWorkflowVersion, useTenants } from '../api/hooks';
 import { workflowApi } from '../api/endpoints';
 import { useTenant } from '../context/TenantContext';
+import { useUnsavedChangesNavigation } from '../context/UnsavedChangesContext';
 import toast from 'react-hot-toast';
 
 const NEW_WORKFLOW_TEMPLATE = {
@@ -64,6 +65,14 @@ export default function WorkflowBuilderPage() {
   const [selectedTenantIds, setSelectedTenantIds] = useState([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [jobProgress, setJobProgress] = useState(null);
+  const [switchToLatestAfterSave, setSwitchToLatestAfterSave] = useState(false);
+  const { hasUnsavedChanges } = useUnsavedChangesNavigation();
+
+  useEffect(() => {
+    if (!switchToLatestAfterSave || hasUnsavedChanges) return;
+    setSwitchToLatestAfterSave(false);
+    navigate(`/workflows/${workflowId}/edit/visual`, { replace: true });
+  }, [switchToLatestAfterSave, hasUnsavedChanges, navigate, workflowId]);
 
   // Hooks for fetching (if editing)
   const { data: workflowData, isLoading: workflowLoading, error: workflowError } = useWorkflow(workflowId);
@@ -93,7 +102,7 @@ export default function WorkflowBuilderPage() {
               : workflowData?.version?.definitionJson;
             return {
               ...(definition || NEW_WORKFLOW_TEMPLATE),
-              ...(!requestedVersion && workflowData?.workflow?.name
+              ...(workflowData?.workflow?.name
                 ? { name: workflowData.workflow.name }
                 : {})
             };
@@ -210,6 +219,11 @@ export default function WorkflowBuilderPage() {
           await createGlobalVersion.mutateAsync(workflowJson);
         } else {
           await createVersion.mutateAsync(workflowJson);
+        }
+        if (requestedVersion) {
+          // Wait for the builder to clear its unsaved state before switching
+          // away from the historical version URL.
+          setSwitchToLatestAfterSave(true);
         }
         toast.success('Changes saved');
         return true;
