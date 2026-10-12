@@ -5,6 +5,7 @@ import { useWorkflow, useWorkflowVersions, useWorkflows, useCreateGlobalWorkflow
 import { workflowApi } from '../api/endpoints';
 import { useTenant } from '../context/TenantContext';
 import { useUnsavedChangesNavigation } from '../context/UnsavedChangesContext';
+import { buildImportWorkflowOptions } from '../utils/importWorkflows';
 import toast from 'react-hot-toast';
 
 const NEW_WORKFLOW_TEMPLATE = {
@@ -117,17 +118,10 @@ export default function WorkflowBuilderPage() {
       .sort();
   }, [tenants]);
 
-  const workflowImportOptions = useMemo(() => {
-    return (Array.isArray(availableWorkflows) ? availableWorkflows : [])
-      .filter((workflow) => workflow?.workflowId && workflow?.isActive !== false)
-      .map((workflow) => ({
-        workflowId: workflow.workflowId,
-        name: workflow.name || workflow.workflowId,
-        scope: workflow.scope || 'tenant',
-        latestVersion: workflow.latestVersion || null,
-      }))
-      .sort((a, b) => a.name.localeCompare(b.name));
-  }, [availableWorkflows]);
+  const workflowImportOptions = useMemo(
+    () => buildImportWorkflowOptions(availableWorkflows),
+    [availableWorkflows]
+  );
 
   const resolvedTenantIds = useMemo(() => {
     if (scope === 'multiple') return selectedTenantIds;

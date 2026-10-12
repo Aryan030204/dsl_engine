@@ -1,7 +1,14 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { AlertCircle, GitFork, BarChart3, Lightbulb, SplitSquareVertical, Layers, Mail, Copy, X, Loader2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { workflowApi } from '../../api/endpoints';
+import { useTenants } from '../../api/hooks';
+import {
+  buildImportTenantOptions,
+  buildImportWorkflowOptions,
+  pickInitialImportTenant,
+} from '../../utils/importWorkflows';
 
 const SidebarItem = ({ type, label, icon: Icon, colorClass, onDragStart }) => (
   <div
@@ -27,25 +34,57 @@ const formatNodeType = (type) => ({
   workflow_ref: 'Workflow Reference',
 }[type] || type || 'Unknown node');
 
-function ImportWorkflowModal({ workflows, tenantId, onImportNode, onClose }) {
+function ImportWorkflowModal({ currentTenantId, onImportNode, onClose }) {
+  const { data: tenants = [], isLoading: tenantsLoading } = useTenants();
+  const tenantOptions = useMemo(() => buildImportTenantOptions(tenants), [tenants]);
+  const [tenantId, setTenantId] = useState('');
   const [workflowId, setWorkflowId] = useState('');
   const [workflowDefinition, setWorkflowDefinition] = useState(null);
   const [loading, setLoading] = useState(false);
+  const latestRequest = useRef(0);
+
+  // Start on the tenant being edited once the tenant list arrives.
+  useEffect(() => {
+    if (!tenantId && tenantOptions.length) {
+      setTenantId(pickInitialImportTenant(tenantOptions, currentTenantId));
+    }
+  }, [tenantId, tenantOptions, currentTenantId]);
+
+  const { data: tenantWorkflows = [], isLoading: workflowsLoading, error: workflowsError } = useQuery({
+    queryKey: ['importWorkflows', tenantId],
+    queryFn: () => workflowApi.list(tenantId, { includeGlobal: true }),
+    enabled: Boolean(tenantId),
+  });
+  const workflows = useMemo(() => buildImportWorkflowOptions(tenantWorkflows), [tenantWorkflows]);
+
+  const selectTenant = (nextTenantId) => {
+    latestRequest.current += 1;
+    setTenantId(nextTenantId);
+    setWorkflowId('');
+    setWorkflowDefinition(null);
+    setLoading(false);
+  };
 
   const selectWorkflow = async (nextWorkflowId) => {
+    const requestId = ++latestRequest.current;
     setWorkflowId(nextWorkflowId);
     setWorkflowDefinition(null);
-    if (!nextWorkflowId) return;
+    if (!nextWorkflowId) {
+      setLoading(false);
+      return;
+    }
 
     setLoading(true);
     try {
       const result = await workflowApi.get(tenantId, nextWorkflowId, { includeGlobal: true });
+      if (requestId !== latestRequest.current) return;
       setWorkflowDefinition(result?.version?.definitionJson || null);
       if (!result?.version?.definitionJson) toast.error('This workflow has no saved definition');
     } catch (error) {
+      if (requestId !== latestRequest.current) return;
       toast.error(error?.response?.data?.error || 'Could not load this workflow');
     } finally {
-      setLoading(false);
+      if (requestId === latestRequest.current) setLoading(false);
     }
   };
 
@@ -64,13 +103,24 @@ function ImportWorkflowModal({ workflows, tenantId, onImportNode, onClose }) {
         </header>
 
         <div className="p-5">
+          <label htmlFor="source-tenant" className="mb-2 block text-sm font-medium text-gray-700">Tenant</label>
+          <select id="source-tenant" value={tenantId} onChange={(event) => selectTenant(event.target.value)} disabled={tenantsLoading || !tenantOptions.length} className="mb-4 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none disabled:bg-gray-50">
+            {tenantsLoading && <option value="">Loading tenants…</option>}
+            {!tenantsLoading && !tenantOptions.length && <option value="">No tenants available</option>}
+            {tenantOptions.map((tenant) => (
+              <option key={tenant.tenantId} value={tenant.tenantId}>{tenant.label}{tenant.tenantId === currentTenantId ? ' (current)' : ''}</option>
+            ))}
+          </select>
+
           <label htmlFor="source-workflow" className="mb-2 block text-sm font-medium text-gray-700">Source workflow</label>
-          <select id="source-workflow" value={workflowId} onChange={(event) => selectWorkflow(event.target.value)} className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none">
-            <option value="">Choose a workflow…</option>
+          <select id="source-workflow" value={workflowId} onChange={(event) => selectWorkflow(event.target.value)} disabled={!tenantId || workflowsLoading} className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none disabled:bg-gray-50">
+            <option value="">{workflowsLoading ? 'Loading workflows…' : 'Choose a workflow…'}</option>
             {workflows.map((workflow) => (
               <option key={workflow.workflowId} value={workflow.workflowId}>{workflow.name} ({workflow.scope === 'global' ? 'Global' : 'Tenant'})</option>
             ))}
           </select>
+          {workflowsError && <p className="mt-2 text-sm text-red-600">{workflowsError?.response?.data?.error || 'Could not load workflows for this tenant'}</p>}
+          {!workflowsLoading && !workflowsError && tenantId && !workflows.length && <p className="mt-2 text-sm text-gray-500">This tenant has no workflows to import from.</p>}
 
           <div className="mt-4 max-h-[50vh] space-y-2 overflow-y-auto">
             {loading && <div className="flex items-center gap-2 py-8 text-sm text-gray-500"><Loader2 className="h-4 w-4 animate-spin" /> Loading workflow nodes…</div>}
@@ -94,7 +144,7 @@ function ImportWorkflowModal({ workflows, tenantId, onImportNode, onClose }) {
   );
 }
 
-export default function NodeSidebar({ workflowImportOptions = [], currentTenantId, onImportNode }) {
+export default function NodeSidebar({ currentTenantId, onImportNode }) {
   const [showImportModal, setShowImportModal] = useState(false);
   const onDragStart = (event, nodeType) => {
     event.dataTransfer.setData('application/reactflow', nodeType);
@@ -177,8 +227,7 @@ export default function NodeSidebar({ workflowImportOptions = [], currentTenantI
       </div>
       {showImportModal && (
         <ImportWorkflowModal
-          workflows={workflowImportOptions}
-          tenantId={currentTenantId}
+          currentTenantId={currentTenantId}
           onImportNode={(node, workflow) => {
             onImportNode?.(node, workflow);
             setShowImportModal(false);

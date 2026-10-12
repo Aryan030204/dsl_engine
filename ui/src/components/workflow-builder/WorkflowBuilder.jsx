@@ -634,7 +634,6 @@ function WorkflowBuilderContent({
       {/* Main Content */}
       <div className="flex-1 flex overflow-hidden">
         <NodeSidebar
-          workflowImportOptions={workflowImportOptions}
           currentTenantId={currentTenantId}
           onImportNode={handleImportNode}
         />
