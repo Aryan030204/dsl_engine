@@ -59,3 +59,15 @@ poller per bot token**. So:
   blocked the bot is reported as a failure without stopping the others (`partial`).
 - The message is `[SEVERITY] <subject>` followed by the email's plain-text
   version, cut to Telegram's 4096-character limit.
+
+## Telegram pages that match the email (optional)
+
+Set `TELEGRAM_RENDER_MODE=email_screenshot` and Telegram receives screenshots of the exact
+email HTML (all formats and presets), so both channels look identical. Off by default.
+
+- Needs a Chrome/Chromium binary on the worker host: set `CHROME_PATH` (auto-detected in
+  common locations). In a container running as root also set `CHROME_NO_SANDBOX=true`.
+- Fallback order: email screenshot -> drawn pages (`renderTelegramImage.js`) -> plain text.
+  A screenshot failure is recorded as `imageFallback` on the node's Telegram delivery.
+- Tuning: `EMAIL_SCREENSHOT_TIMEOUT_MS` (default 20000), `EMAIL_SCREENSHOT_CONCURRENCY` (default 2).
+  The first render launches the browser (~9 s measured locally); later renders take ~0.2 s.

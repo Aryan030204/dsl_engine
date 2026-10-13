@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState, useEffect } from 'react';
+import React, { useCallback, useMemo, useState, useEffect, useRef } from 'react';
 import { ReactFlowProvider, useNodesState, useEdgesState, addEdge, MarkerType, useReactFlow } from '@xyflow/react';
 import { ArrowLeft, Save, Layout } from 'lucide-react';
 import toast from 'react-hot-toast';
@@ -16,6 +16,7 @@ import {
   getPartialDayProductCompatibilityErrors,
 } from '../../utils/workflowValidation';
 import { getStateConfigErrors, withStateConfigDefaults } from '../../utils/stateConfig';
+import { canSaveWorkflow, shouldResetFromServer } from '../../utils/unsavedChanges';
 
 const sanitizeIdSegment = (value) =>
   String(value || '')
@@ -47,6 +48,7 @@ function WorkflowBuilderContent({
   tenantsLoading,
   currentTenantId,
   isSaving,
+  allowSaveWithoutChanges = false,
 }) {
   const { fitView } = useReactFlow();
   const [nodes, setNodes, applyNodesChange] = useNodesState([]);
@@ -104,9 +106,22 @@ function WorkflowBuilderContent({
   }, [nodes]);
 
   // Initialize graph from JSON on mount
+  const isDirtyRef = useRef(false);
+  const loadedWorkflowIdRef = useRef(null);
+  isDirtyRef.current = hasUnsavedChanges;
+
   useEffect(() => {
     if (initialData) {
+      // A background refetch of the same workflow must not discard unsaved edits.
+      if (!shouldResetFromServer({
+        isDirty: isDirtyRef.current,
+        loadedWorkflowId: loadedWorkflowIdRef.current,
+        incomingWorkflowId: initialData.workflow_id,
+      })) {
+        return;
+      }
       const { nodes: flowNodes, edges: flowEdges } = jsonToGraph(initialData);
+      loadedWorkflowIdRef.current = initialData.workflow_id;
       setMetadata(initialData);
       setNodes(flowNodes);
       setEdges(flowEdges);
@@ -429,7 +444,10 @@ function WorkflowBuilderContent({
     [workflowImportOptionMap, nodes, edges, selectedNode, setNodes, setEdges, fitView]
   );
 
+  const canSave = canSaveWorkflow({ isEditing, isDirty: hasUnsavedChanges, allowSaveWithoutChanges });
+
   const handleSave = async () => {
+    if (!canSave) return false;
     try {
       const workflowJson = graphToJson(nodes, edges, metadata);
       // Rewrites a state_config saved in an older shape (direction/recovery) to the
@@ -522,9 +540,10 @@ function WorkflowBuilderContent({
           </button>
           <button
             onClick={handleSave}
-            disabled={isSaving}
+            disabled={isSaving || !canSave}
+            title={!canSave ? 'No unsaved changes' : undefined}
             className={`flex items-center gap-2 px-4 py-2 text-sm font-medium text-white rounded ${
-              isSaving ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'
+              isSaving || !canSave ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'
             }`}
           >
             <Save className="w-4 h-4" />
@@ -615,7 +634,6 @@ function WorkflowBuilderContent({
       {/* Main Content */}
       <div className="flex-1 flex overflow-hidden">
         <NodeSidebar
-          workflowImportOptions={workflowImportOptions}
           currentTenantId={currentTenantId}
           onImportNode={handleImportNode}
         />

@@ -1,5 +1,6 @@
 const { renderEmail } = require('../server/lib/renderEmail');
 const { renderTelegramImages } = require('../server/lib/renderTelegramImage');
+const { renderEmailScreenshots, isEmailScreenshotMode } = require('../server/lib/renderEmailScreenshot');
 const { resolveBinding } = require('../server/lib/emailBindings');
 const { sendEmail } = require('../server/services/emailService');
 const { sendTelegram } = require('../server/services/telegramService');
@@ -48,18 +49,31 @@ async function MessagingNode(def, context, runtime = {}) {
     // the run.
     let images;
     let imageError = null;
-    try {
-      images = await renderTelegramImages({
-        title: rendered.subject,
-        message: rendered.text,
-        insight: insightBinding?.value,
-        reportViewModel: rendered.viewModel,
-        brandName: context?.meta?.brandName,
-        workflowName: context?.meta?.workflowName,
-        severity
-      });
-    } catch (error) {
-      imageError = error.message;
+    // With TELEGRAM_RENDER_MODE=email_screenshot the Telegram pages are screenshots of
+    // the very email HTML, so both channels look identical. Any failure there falls
+    // back to the drawn pages below, and from those to plain text.
+    if (isEmailScreenshotMode()) {
+      try {
+        const screenshotRenderer = runtime.emailScreenshotRenderer || renderEmailScreenshots;
+        images = await screenshotRenderer({ html: rendered.html });
+      } catch (error) {
+        imageError = `email screenshot: ${error.message}`;
+      }
+    }
+    if (!images || !images.length) {
+      try {
+        images = await renderTelegramImages({
+          title: rendered.subject,
+          message: rendered.text,
+          insight: insightBinding?.value,
+          reportViewModel: rendered.viewModel,
+          brandName: context?.meta?.brandName,
+          workflowName: context?.meta?.workflowName,
+          severity
+        });
+      } catch (error) {
+        imageError = imageError ? `${imageError}; ${error.message}` : error.message;
+      }
     }
     deliveries.telegram = await telegramSender({
       title: rendered.subject,
