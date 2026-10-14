@@ -1,5 +1,6 @@
 const queryBuilder = require('../sql/QueryBuilder');
 const queryExecutor = require('../sql/QueryExecutor');
+const { summarizeSkus } = require('../lib/inventorySkus');
 const {
   buildDefaultBreakdownOutputKey,
   detectOutputKeyMode,
@@ -124,7 +125,7 @@ async function runInventoryBreakdown(def, context) {
     return {
       product_id: String(row.product_id),
       product_title: row.product_title || 'Untitled product',
-      sku: row.sku || '—',
+      sku: summarizeSkus(row.sku, row.sku_count),
       inventory_available: Number(row.inventory_available || 0),
       sold_units_7d: Number(row.sold_units_7d || 0),
       drr_7d: Number(row.drr_7d || 0),
