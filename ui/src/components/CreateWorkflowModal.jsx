@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { X, Plus } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useCreateGlobalWorkflow, useCreateWorkflowForTenants, useTenants } from '../api/hooks';
+import { applyTypedWorkflowName } from '../utils/workflowName';
 import { workflowApi } from '../api/endpoints';
 import { useTenant } from '../context/TenantContext';
 import { Button } from './ui';
@@ -228,7 +229,8 @@ export default function CreateWorkflowModal({ onClose }) {
     e.preventDefault();
 
     try {
-      const definition = JSON.parse(jsonInput);
+      // The name typed above the editor replaces the JSON's own "name".
+      const definition = applyTypedWorkflowName(JSON.parse(jsonInput), formData.name);
       delete definition.workflow_id;
       setJsonError(null);
 
@@ -536,6 +538,23 @@ export default function CreateWorkflowModal({ onClose }) {
           ) : (
             <form onSubmit={handleJsonSubmit} id="create-form">
               <div className="px-6 py-4">
+                <div className="mb-4">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Workflow Name
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.name}
+                    onChange={(e) =>
+                      setFormData({ ...formData, name: e.target.value })
+                    }
+                    placeholder="Leave empty to use the name in the JSON"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    If you enter a name here, it is used instead of the "name" in the JSON.
+                  </p>
+                </div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Workflow Definition (JSON)
                 </label>
