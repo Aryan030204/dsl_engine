@@ -1,16 +1,53 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useTenant } from '../context/TenantContext';
+import { useUnsavedChangesNavigation } from '../context/UnsavedChangesContext';
 import { useTenants } from '../api/hooks';
 import { Building2, ChevronDown, Plus } from 'lucide-react';
 import CreateTenantModal from './CreateTenantModal';
+import { TENANT_HOME_PATH, planTenantSwitch } from '../utils/tenantSwitch';
 
 export default function Header() {
   const { tenantId, setTenantId } = useTenant();
   const { data: tenants, isLoading } = useTenants();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const { hasUnsavedChanges, blocker } = useUnsavedChangesNavigation();
   const [isOpen, setIsOpen] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
+  // A tenant waiting for the "unsaved changes" prompt to be resolved before it is applied.
+  const [pendingTenantId, setPendingTenantId] = useState(null);
+  const sawBlockedRef = useRef(false);
 
   const tenantList = tenants || [];
+
+  const switchTenant = (nextTenantId) => {
+    const plan = planTenantSwitch({
+      nextTenantId,
+      currentTenantId: tenantId,
+      pathname: location.pathname,
+      isDirty: hasUnsavedChanges,
+    });
+    sawBlockedRef.current = false;
+    setPendingTenantId(plan.deferTenantChange ? nextTenantId : null);
+    if (plan.setTenantNow) setTenantId(nextTenantId);
+    if (plan.navigateTo) navigate(plan.navigateTo);
+  };
+
+  // Apply a deferred switch once the list page is reached; drop it if the user cancels the prompt.
+  useEffect(() => {
+    if (!pendingTenantId) return;
+    if (location.pathname.replace(/\/+$/, '') === TENANT_HOME_PATH) {
+      setTenantId(pendingTenantId);
+      setPendingTenantId(null);
+      return;
+    }
+    if (blocker.state === 'blocked') sawBlockedRef.current = true;
+    else if (sawBlockedRef.current) {
+      sawBlockedRef.current = false;
+      setPendingTenantId(null);
+    }
+  }, [pendingTenantId, location.pathname, blocker.state, setTenantId]);
 
   return (
     <header className="h-16 bg-white border-b border-gray-200 flex items-center justify-between px-6 fixed top-0 left-64 right-0 z-10">
@@ -45,7 +82,7 @@ export default function Header() {
                   <button
                     key={tenant.tenantId}
                     onClick={() => {
-                      setTenantId(tenant.tenantId);
+                      switchTenant(tenant.tenantId);
                       setIsOpen(false);
                     }}
                     className={`w-full text-left px-4 py-2.5 hover:bg-gray-50 ${
