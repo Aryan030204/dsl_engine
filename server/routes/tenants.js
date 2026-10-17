@@ -27,6 +27,8 @@ function isSupportedTimeZone(timeZone) {
   }
 }
 
+const { normalizeShopifyDomain } = require('../../lib/shopifyDomain');
+
 const router = express.Router();
 
 // List all tenants
@@ -103,6 +105,13 @@ router.post('/', requireAdmin, async (req, res, next) => {
     if (resolvedSettings.currency !== undefined && !isSupportedCurrency(resolvedSettings.currency)) {
       return res.status(400).json({ error: 'currency must be a 3-letter ISO currency code, e.g. INR' });
     }
+    if (resolvedSettings.shopifyDomain !== undefined) {
+      const domain = normalizeShopifyDomain(resolvedSettings.shopifyDomain);
+      if (!domain.ok) {
+        return res.status(400).json({ error: 'shopifyDomain must look like your-store.myshopify.com' });
+      }
+      resolvedSettings.shopifyDomain = domain.value;
+    }
     const brandingErrors = validateEmailBranding(resolvedSettings.emailBranding, 'settings.emailBranding');
     if (brandingErrors.length) return res.status(400).json({ errors: brandingErrors });
 
@@ -139,6 +148,13 @@ router.patch('/:tenantId', async (req, res, next) => {
       }
       if (settings.currency !== undefined && !isSupportedCurrency(settings.currency)) {
         return res.status(400).json({ error: 'currency must be a 3-letter ISO currency code, e.g. INR' });
+      }
+      if (settings.shopifyDomain !== undefined) {
+        const domain = normalizeShopifyDomain(settings.shopifyDomain);
+        if (!domain.ok) {
+          return res.status(400).json({ error: 'shopifyDomain must look like your-store.myshopify.com' });
+        }
+        settings.shopifyDomain = domain.value;
       }
       const brandingErrors = validateEmailBranding(settings.emailBranding, 'settings.emailBranding');
       if (brandingErrors.length) return res.status(400).json({ errors: brandingErrors });

@@ -225,6 +225,12 @@ function renderTable(table, primaryColor) {
   return `<div class="rpt-panel" style="margin-top:20px;border:1px solid #e5e7eb;border-radius:8px;padding:20px;"><div class="rpt-panel-title" style="font-size:16px;font-weight:800;color:${toneColor};text-transform:uppercase;">${escapeHtml(table.title)}</div><table role="table" width="100%" cellpadding="0" cellspacing="0" style="margin-top:14px;border-collapse:collapse;"><thead><tr>${header}</tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
+// Stock on hand: whole units with thousands separators, a dash when unknown.
+function formatStock(value) {
+  const number = Number(value);
+  return value == null || !Number.isFinite(number) ? '—' : Math.round(number).toLocaleString('en-US');
+}
+
 function renderInventoryReportEmail({ context, template, branding, subject }) {
   const report = context?.scratch?.inventoryReport;
   if (!report || !Array.isArray(report.products)) {
@@ -259,29 +265,34 @@ function renderInventoryReportEmail({ context, template, branding, subject }) {
       const background = critical ? '#fff1f2' : '#fff7ed';
       const doh = product.doh_7d == null ? '—' : Number(product.doh_7d).toFixed(2);
       const drr = Number(product.drr_7d || 0).toFixed(2);
+      const stock = formatStock(product.inventory_available);
       return `<tr style="background:${background};border-top:1px solid #e5e7eb;">
         <td style="padding:13px 10px;"><span style="display:inline-block;width:27px;height:27px;line-height:27px;text-align:center;border-radius:5px;background:${tone};color:#fff;font-weight:800;">${index + 1}</span></td>
         <td style="padding:13px 10px;font-weight:700;">${escapeHtml(product.product_title)}</td>
         <td style="padding:13px 10px;">${escapeHtml(product.sku)}</td>
+        <td align="right" style="padding:13px 10px;font-weight:700;">${escapeHtml(stock)}</td>
         <td align="right" style="padding:13px 10px;">${escapeHtml(drr)}</td>
         <td align="right" style="padding:13px 10px;color:${tone};font-weight:800;">${escapeHtml(doh)}</td>
         <td align="center" style="padding:13px 10px;"><span style="display:inline-block;border-radius:16px;padding:6px 12px;background:${critical ? '#fee2e2' : '#ffedd5'};color:${tone};font-weight:700;">${escapeHtml(product.status)}</span></td>
       </tr>`;
     }).join('')
-    : `<tr><td colspan="6" align="center" style="padding:20px;color:#6b7280;">No products with a calculable DOH were found.</td></tr>`;
+    : `<tr><td colspan="7" align="center" style="padding:20px;color:#6b7280;">No products with a calculable DOH were found.</td></tr>`;
   const mobileProductCards = report.lowest_doh_products.length
     ? report.lowest_doh_products.map((product, index) => {
       const critical = product.status === 'Critical';
       const tone = critical ? '#dc2626' : '#ea580c';
       const doh = product.doh_7d == null ? '—' : Number(product.doh_7d).toFixed(2);
       const drr = Number(product.drr_7d || 0).toFixed(2);
+      const stock = formatStock(product.inventory_available);
       return `<div class="inventory-mobile-product" style="display:none;margin-top:12px;padding:14px;border:1px solid #e5e7eb;border-radius:10px;background:${critical ? '#fff1f2' : '#fff7ed'};">
         <div style="font-size:15px;font-weight:700;color:#111827;">${index + 1}. ${escapeHtml(product.product_title)}</div>
         <div style="margin-top:5px;font-size:12px;color:#5b6475;word-break:break-word;">SKU: ${escapeHtml(product.sku)}</div>
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:12px;border-collapse:collapse;"><tr>
-          <td width="33%" style="padding:8px 4px;border-top:1px solid #e5e7eb;"><div style="font-size:10px;color:#64748b;">DRR (7 days)</div><div style="margin-top:3px;font-size:14px;font-weight:700;">${escapeHtml(drr)}</div></td>
-          <td width="33%" style="padding:8px 4px;border-top:1px solid #e5e7eb;"><div style="font-size:10px;color:#64748b;">DOH (7 days)</div><div style="margin-top:3px;font-size:14px;font-weight:800;color:${tone};">${escapeHtml(doh)}</div></td>
-          <td width="34%" style="padding:8px 4px;border-top:1px solid #e5e7eb;"><div style="font-size:10px;color:#64748b;">Status</div><div style="margin-top:3px;font-size:12px;font-weight:700;color:${tone};">${escapeHtml(product.status)}</div></td>
+          <td width="50%" style="padding:8px 4px;border-top:1px solid #e5e7eb;"><div style="font-size:10px;color:#64748b;">Current Inventory</div><div style="margin-top:3px;font-size:14px;font-weight:700;">${escapeHtml(stock)}</div></td>
+          <td width="50%" style="padding:8px 4px;border-top:1px solid #e5e7eb;"><div style="font-size:10px;color:#64748b;">DRR (7 days)</div><div style="margin-top:3px;font-size:14px;font-weight:700;">${escapeHtml(drr)}</div></td>
+        </tr><tr>
+          <td width="50%" style="padding:8px 4px;border-top:1px solid #e5e7eb;"><div style="font-size:10px;color:#64748b;">DOH (7 days)</div><div style="margin-top:3px;font-size:14px;font-weight:800;color:${tone};">${escapeHtml(doh)}</div></td>
+          <td width="50%" style="padding:8px 4px;border-top:1px solid #e5e7eb;"><div style="font-size:10px;color:#64748b;">Status</div><div style="margin-top:3px;font-size:12px;font-weight:700;color:${tone};">${escapeHtml(product.status)}</div></td>
         </tr></table>
       </div>`;
     }).join('')
@@ -306,7 +317,7 @@ function renderInventoryReportEmail({ context, template, branding, subject }) {
     <table role="presentation" class="inventory-header" width="100%" cellpadding="0" cellspacing="0" style="background:#effaf4;border-radius:12px;padding:20px;"><tr><td class="inventory-brand-cell"><div style="font-size:21px;font-weight:900;letter-spacing:.16em;color:#111827;">${escapeHtml(brand.displayName.toUpperCase())}</div></td><td class="inventory-date-cell" align="right"><div style="font-size:12px;color:#4b5563;text-transform:uppercase;">Inventory as of</div><div style="font-size:19px;font-weight:800;color:${brand.primaryColor};">${escapeHtml(asOf)}</div></td></tr>
       <tr><td colspan="2" align="center" style="padding-top:20px;"><span style="display:inline-block;padding:7px 14px;border-radius:18px;background:#d1fae5;color:#047857;font-size:12px;font-weight:800;text-transform:uppercase;">${escapeHtml(template.eyebrow || 'Inventory Alert')}</span><div style="margin-top:12px;font-size:32px;line-height:1.15;font-weight:900;color:#111827;">${escapeHtml(template.title || 'Top Products Inventory Report')}</div><div style="margin-top:8px;font-size:15px;color:#5b6475;">${escapeHtml(template.description || `Inventory health of the top ${report.analyzed_count} products, ranked by 7-day sales.`)}</div></td></tr></table>
     <div class="inventory-section" style="margin-top:16px;border:1px solid #e5e7eb;border-radius:10px;padding:18px;"><div style="font-size:22px;font-weight:900;">Inventory Overview</div><div style="margin:6px 0 16px;color:#5b6475;">Inventory health of the top ${report.analyzed_count} products, ranked by 7-day sales.</div><table role="presentation" width="100%" cellpadding="6" cellspacing="6"><tr>${cards.map(([label, value, color, bg]) => `<td class="inventory-card-cell" width="25%" valign="top" style="padding:15px;border-radius:10px;background:${bg};"><div style="font-size:13px;font-weight:700;">${escapeHtml(label)}</div><div style="margin-top:12px;font-size:32px;font-weight:900;color:${color};">${escapeHtml(value)}</div></td>`).join('')}</tr></table><div style="margin-top:10px;padding:12px 14px;background:#f3f6fa;border-radius:8px;color:#4b5563;font-size:12px;">Status counts are calculated across the selected products using the configured DOH thresholds.</div>${notes}</div>
-    <div class="inventory-section" style="margin-top:16px;border:1px solid #e5e7eb;border-radius:10px;padding:18px;"><div style="font-size:22px;font-weight:900;">Top ${escapeHtml(reportTopK)} Products with Lowest DOH</div><div style="margin:6px 0 16px;color:#5b6475;">The products with the fewest estimated days of inventory among the top sellers.</div><table class="inventory-desktop-table" role="table" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;"><thead><tr style="background:#f3f4f6;"><th align="left" style="padding:11px;">#</th><th align="left" style="padding:11px;">Product</th><th align="left" style="padding:11px;">SKU</th><th align="right" style="padding:11px;">DRR (7 days)</th><th align="right" style="padding:11px;">DOH (7 days)</th><th align="center" style="padding:11px;">Status</th></tr></thead><tbody>${rows}</tbody></table>${mobileProductCards}</div>
+    <div class="inventory-section" style="margin-top:16px;border:1px solid #e5e7eb;border-radius:10px;padding:18px;"><div style="font-size:22px;font-weight:900;">Top ${escapeHtml(reportTopK)} Products with Lowest DOH</div><div style="margin:6px 0 16px;color:#5b6475;">The products with the fewest estimated days of inventory among the top sellers.</div><table class="inventory-desktop-table" role="table" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;"><thead><tr style="background:#f3f4f6;"><th align="left" style="padding:11px;">#</th><th align="left" style="padding:11px;">Product</th><th align="left" style="padding:11px;">SKU</th><th align="right" style="padding:11px;">Current Inventory</th><th align="right" style="padding:11px;">DRR (7 days)</th><th align="right" style="padding:11px;">DOH (7 days)</th><th align="center" style="padding:11px;">Status</th></tr></thead><tbody>${rows}</tbody></table>${mobileProductCards}</div>
     <table role="presentation" width="100%" style="margin-top:24px;border-collapse:collapse;"><tr><td align="right" style="font-size:12px;color:#6b7280;">${escapeHtml(brand.footerText)}</td></tr></table>
   </div></body></html>`;
   const text = [
@@ -319,12 +330,12 @@ function renderInventoryReportEmail({ context, template, branding, subject }) {
     `Healthy (≥${report.healthy_threshold_days} DOH): ${report.healthy_count}`,
     '',
     'Top products with lowest DOH:',
-    ...report.lowest_doh_products.map((product, index) => `${index + 1}. ${product.product_title} | SKU ${product.sku} | DRR ${Number(product.drr_7d || 0).toFixed(2)} | DOH ${product.doh_7d == null ? '—' : Number(product.doh_7d).toFixed(2)} | ${product.status}`),
+    ...report.lowest_doh_products.map((product, index) => `${index + 1}. ${product.product_title} | SKU ${product.sku} | Inventory ${formatStock(product.inventory_available)} | DRR ${Number(product.drr_7d || 0).toFixed(2)} | DOH ${product.doh_7d == null ? '—' : Number(product.doh_7d).toFixed(2)} | ${product.status}`),
     brand.footerText
   ].join('\n');
   const inventoryRows = report.lowest_doh_products.map((product, index) => ({
     rank: index + 1,
-    cells: [product.product_title, product.sku, Number(product.drr_7d || 0).toFixed(2),
+    cells: [product.product_title, product.sku, formatStock(product.inventory_available), Number(product.drr_7d || 0).toFixed(2),
       product.doh_7d == null ? '—' : Number(product.doh_7d).toFixed(2), product.status]
       .map((value) => ({ value: String(value ?? ''), format: 'text', numericValue: null }))
   }));
@@ -341,7 +352,7 @@ function renderInventoryReportEmail({ context, template, branding, subject }) {
       description: template.description || '',
       tables: [{
         title: `Top ${reportTopK} Products with Lowest DOH`,
-        columns: ['Product', 'SKU', 'DRR (7 days)', 'DOH (7 days)', 'Status'].map((label) => ({ label })),
+        columns: ['Product', 'SKU', 'Current Inventory', 'DRR (7 days)', 'DOH (7 days)', 'Status'].map((label) => ({ label })),
         rows: inventoryRows
       }]
     }

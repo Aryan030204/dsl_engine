@@ -24,6 +24,10 @@ const WorkflowRunSchema = new mongoose.Schema(
       default: 'manual'
     },
     triggerRef: { type: mongoose.Schema.Types.Mixed, default: null },
+    // Manual runs are dry runs for the state engine unless the caller opts in: they preview
+    // the decision but never change alert state, start a cooldown or send anything.
+    // Scheduled and alert-triggered runs are always live. See stateEngineService.previewExecution.
+    notifyLive: { type: Boolean, default: false },
     executionKey: { type: String, index: true },
     context: { type: Object, required: true },
     definitionJson: { type: Object, required: true },

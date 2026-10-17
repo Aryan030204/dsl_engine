@@ -25,6 +25,7 @@ export default function SettingsPage() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [timezoneDrafts, setTimezoneDrafts] = useState({});
   const [currencyDrafts, setCurrencyDrafts] = useState({});
+  const [shopDomainDrafts, setShopDomainDrafts] = useState({});
   const [brandingDrafts, setBrandingDrafts] = useState({});
 
   const handleDeleteTenant = async (tid) => {
@@ -81,6 +82,25 @@ export default function SettingsPage() {
       toast.success(`Currency updated for '${tenant.tenantId}'`);
     } catch (err) {
       toast.error(err.response?.data?.error || 'Failed to update tenant currency');
+    }
+  };
+
+  const getDraftShopDomain = (tenant) => shopDomainDrafts[tenant.tenantId] ?? tenant.settings?.shopifyDomain ?? '';
+
+  const handleSaveShopDomain = async (tenant) => {
+    try {
+      await updateTenant.mutateAsync({
+        tenantId: tenant.tenantId,
+        updates: {
+          settings: {
+            ...(tenant.settings || {}),
+            shopifyDomain: getDraftShopDomain(tenant).trim()
+          }
+        }
+      });
+      toast.success(`Shopify domain updated for '${tenant.tenantId}'`);
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to update Shopify domain');
     }
   };
 
@@ -219,6 +239,29 @@ export default function SettingsPage() {
                         >
                           <Save className="w-4 h-4 mr-1" />
                           Save Currency
+                        </Button>
+                      </div>
+                      <div className="mt-3 flex items-end gap-2">
+                        <div className="flex-1">
+                          <label className="block text-xs text-gray-500 mb-1">Shopify domain (inventory report cache)</label>
+                          <input
+                            className="h-9 w-full border border-gray-300 rounded-lg px-3 text-sm bg-white"
+                            placeholder="your-store.myshopify.com"
+                            value={getDraftShopDomain(tenant)}
+                            onChange={(e) => setShopDomainDrafts((prev) => ({
+                              ...prev,
+                              [tenant.tenantId]: e.target.value
+                            }))}
+                          />
+                        </div>
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => handleSaveShopDomain(tenant)}
+                          loading={updateTenant.isPending}
+                        >
+                          <Save className="w-4 h-4 mr-1" />
+                          Save Domain
                         </Button>
                       </div>
                       <div className="mt-4 border-t border-gray-200 pt-3">

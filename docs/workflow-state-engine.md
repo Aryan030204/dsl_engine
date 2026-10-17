@@ -29,15 +29,18 @@ When the engine is on, the workflow's `email` and `insight` nodes still render t
 emails, but the sends are captured instead of delivered
 (`server/lib/notificationCapture.js`). After the run, the engine sends at most
 **one** email: the captured content, with the subject and body exactly as the
-workflow rendered them. The engine only decides whether it goes out. If no email
-node ran, it sends a short built-in message.
+workflow rendered them. The engine only decides whether it goes out. It never invents
+a notification: if the run's path reached no email or messaging node (a deliberate
+silent branch, such as "CVR is stable"), nothing is sent. The evaluation shows delivery
+`none` with the reason `no_notification_on_path`, and the cooldown is handed back so
+the next run that does reach a notifier still sends.
 
 **Telegram** (messaging nodes with the Telegram channel on) is gated the same way.
 Its messages are captured during the run and sent only when the engine decides to
 notify: same cooldowns, same quiet hours, one decision per run. The delivery is
 recorded as `sent` (every channel got through), `partial` (some did) or `failed`
 (none did), and the cooldown is handed back only when nothing was delivered. A
-Telegram-only messaging node sends no email, not even the built-in message.
+Telegram-only messaging node sends no email.
 Without alert state (daily insights, or RCA workflows with it off) a messaging node
 sends email and Telegram on every run.
 
@@ -91,7 +94,12 @@ is not. A window may wrap midnight.
 
 The state is keyed by **(tenantId, workflowId)**. Global and multi-tenant workflows
 keep separate state per tenant, and editing a workflow (a new version) keeps its
-state. Manual, scheduled and alert-triggered runs all follow the same rules.
+state. Scheduled (cron) and alert-triggered (event) runs are **live**: they move the
+state, start cooldowns and send. **Manual runs are dry runs by default**: the run page
+shows what the engine would decide (`Dry run, nothing sent`), but the state, the
+cooldown and the audit trail are untouched and nothing is emailed. Tick "Send
+notifications and update alert state" in the Run Workflow dialog (API: `notify: true`
+in the run request body) to make a manual run live.
 
 | previous → result | notification | cooldown | quiet hours |
 |---|---|---|---|
@@ -158,7 +166,7 @@ the email's subject or body.
 | `server/lib/stateEngine/quietHours.js` | Quiet-minute check and the quiet-paused cooldown clock |
 | `server/lib/stateEngine/evaluateState.js` | Pure transition and notification decision |
 | `server/services/stateEngineService.js` | Versioned writes, audit rows, delivery, rollback |
-| `server/lib/renderStateEmail.js` | Sends the captured email as rendered, or the built-in fallback message |
+| `server/lib/renderStateEmail.js` | Sends the captured email as rendered (the built-in fallback message is no longer used) |
 | `server/services/workflowExecutionService.js` | `prepareNotificationMode` / `applyStateEngine` hook into `executeRun` |
 | `ui/src/components/workflow-builder/AlertStatePanel.jsx` | Builder settings |
 | `ui/src/components/StateEngineViews.jsx` | Workflow and run state views |

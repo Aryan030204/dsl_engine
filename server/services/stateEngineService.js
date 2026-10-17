@@ -138,7 +138,8 @@ function summarize(evaluation, delivery) {
     delivery_status: delivery?.status || evaluation.delivery?.status || 'none',
     delivery_error: delivery?.error || evaluation.delivery?.error || null,
     telegram_status: delivery?.telegram?.status || evaluation.delivery?.telegram?.status || null,
-    telegram_error: delivery?.telegram?.error || evaluation.delivery?.telegram?.error || null
+    telegram_error: delivery?.telegram?.error || evaluation.delivery?.telegram?.error || null,
+    delivery_skipped_reason: delivery?.skippedReason || evaluation.delivery?.skipped_reason || null
   };
 }
 
@@ -205,6 +206,51 @@ function createStateEngineService({
     return { evaluation, replayed: false };
   }
 
+  // Manual (dry-run) executions: work out what the engine WOULD decide from the current state,
+  // without writing anything -- no state change, no cooldown, no audit row, no delivery. This is
+  // how a manual run stays a safe preview instead of moving live alert state or emailing people.
+  async function previewExecution({ tenantId, workflowId, triggerType, context, config: rawConfig, timezone = 'UTC' }) {
+    if (!tenantId || !workflowId) {
+      throw new Error('state engine: tenantId and workflowId are required');
+    }
+    const config = normalizeStateConfig(rawConfig);
+    const finding = resolveFindingValue(context, config.finding);
+    const current = await store.getState(tenantId, workflowId);
+
+    if (!finding.conclusive) {
+      return {
+        conclusive: false,
+        previous_state: current?.state || 'NORMAL',
+        resulting_state: current?.state || 'NORMAL',
+        trigger_type: triggerType || null,
+        finding: { metric: finding.metric, value: null },
+        notification: { candidate_reason: null, should_send: false, reason: null, suppressed_by: null },
+        delivery_status: 'dry_run',
+        delivery_error: null,
+        telegram_status: null,
+        telegram_error: null,
+        delivery_skipped_reason: null,
+        dry_run: true
+      };
+    }
+
+    const decision = evaluateState({ prior: current, finding, triggerType, now: now(), config, timezone });
+    return {
+      conclusive: true,
+      previous_state: decision.previous_state,
+      resulting_state: decision.resulting_state,
+      trigger_type: decision.trigger_type,
+      finding: decision.finding,
+      notification: decision.notification,
+      delivery_status: 'dry_run',
+      delivery_error: null,
+      telegram_status: null,
+      telegram_error: null,
+      delivery_skipped_reason: null,
+      dry_run: true
+    };
+  }
+
   // A failed send must not consume the cooldown. Hands back only the notification
   // bookkeeping this execution wrote; the state transition itself always stands.
   // Guarded on last_alert_at and the cooldown start so a later execution's own alert
@@ -251,10 +297,24 @@ function createStateEngineService({
 
     const decision = claimed.decision || evaluation.decision;
 
-    // Email goes out when the run captured one, or -- when the run captured nothing
-    // at all -- as the built-in fallback. A run whose only notifier is a Telegram-only
+    // The engine decides *whether* the workflow's own notification goes out; it never invents
+    // one. If this run's path reached no email/messaging node (a deliberate silent branch such as
+    // "CVR is stable"), nothing is sent -- and the cooldown is handed back so the next run that
+    // does reach a notifier is not blocked by an alert nobody received.
+    if (intents.length === 0 && telegramIntents.length === 0) {
+      const rolledBack = await rollbackBookkeeping({ tenantId, workflowId, decision });
+      await store.updateDelivery(tenantId, workflowId, executionId, {
+        status: 'none',
+        skipped_reason: 'no_notification_on_path',
+        rolled_back: rolledBack,
+        error: null
+      });
+      return { status: 'none', skippedReason: 'no_notification_on_path', rolledBack, to: [], subject: null, messageId: null, email: null, telegram: null };
+    }
+
+    // Email goes out when the run captured one. A run whose only notifier is a Telegram-only
     // messaging node sends Telegram and no email.
-    const emailWanted = intents.length > 0 || telegramIntents.length === 0;
+    const emailWanted = intents.length > 0;
     const email = emailWanted
       ? await deliverEmail({ decision, intents, fallbackRecipients, workflowName, brandName, branding })
       : null;
@@ -348,7 +408,7 @@ function createStateEngineService({
     return { evaluation, replayed, delivery, summary: summarize(evaluation, delivery) };
   }
 
-  return { applyExecution, deliver, processExecution, rollbackBookkeeping };
+  return { applyExecution, deliver, processExecution, previewExecution, rollbackBookkeeping };
 }
 
 let defaultService = null;

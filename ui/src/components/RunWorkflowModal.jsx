@@ -65,6 +65,8 @@ export default function RunWorkflowModal({ workflow, onClose }) {
   });
 
   const [usePreviousPeriod, setUsePreviousPeriod] = useState(false);
+  // Manual runs are dry runs for alert state unless this is ticked (see server/services/workflowExecutionService).
+  const [notifyLive, setNotifyLive] = useState(false);
   const [previousBaselineDates, setPreviousBaselineDates] = useState(null);
 
   useEffect(() => {
@@ -161,7 +163,7 @@ export default function RunWorkflowModal({ workflow, onClose }) {
     };
 
     try {
-      const result = await executeWorkflow.mutateAsync({ context, mode: 'async' });
+      const result = await executeWorkflow.mutateAsync({ context, mode: 'async', notify: notifyLive });
       toast.success(`Workflow run started: ${result.runId}`);
       onClose();
       navigate(`/workflows/${workflow.workflowId}/runs/${result.runId}`);
@@ -276,6 +278,24 @@ export default function RunWorkflowModal({ workflow, onClose }) {
                   />
                 </div>
               </div>
+            </div>
+
+            {/* Live notifications (alert-state workflows) */}
+            <div className="flex items-start gap-2 py-1 border-t border-gray-100 pt-4">
+              <input
+                type="checkbox"
+                id="notifyLive"
+                checked={notifyLive}
+                onChange={(e) => setNotifyLive(e.target.checked)}
+                className="w-4 h-4 mt-0.5 text-primary-600 border-gray-300 rounded focus:ring-primary-500"
+              />
+              <label htmlFor="notifyLive" className="text-sm text-gray-700 cursor-pointer">
+                <span className="font-medium">Send notifications and update alert state</span>
+                <span className="block text-xs text-gray-500">
+                  Off by default: for workflows with alert state, a manual run only shows what would happen.
+                  Nothing is emailed, and the state and cooldown are left alone.
+                </span>
+              </label>
             </div>
           </div>
 

@@ -9,6 +9,8 @@ const TenantSchema = new mongoose.Schema(
     settings: {
       currency: { type: String, default: 'USD' },
       timezone: { type: String, default: 'UTC' },
+      // Shopify store domain (e.g. the-man-company.myshopify.com): key for per-store cached data.
+      shopifyDomain: { type: String, default: '' },
       emailBranding: {
         displayName: { type: String },
         logoUrl: { type: String },

@@ -46,10 +46,30 @@ function prepareNotificationMode(definition) {
 
 // Never throws: a state-engine problem is recorded on the run but must not fail an
 // otherwise-successful run, since a failed run is retried and re-executed.
+// Manual runs are dry runs unless the caller opted in (run.notifyLive): they report what the
+// engine would decide but change no state and send nothing. Scheduled and alert-triggered
+// runs are always live.
+function isDryRun(run) {
+  return run.triggerType === 'manual' && run.notifyLive !== true;
+}
+
 async function applyStateEngine({ run, result, intents, telegramIntents = [], stateEngine = getDefaultStateEngineService() }) {
   const definition = run.definitionJson || {};
   const meta = result.context?.meta || {};
   try {
+    if (isDryRun(run)) {
+      run.stateEvaluation = await stateEngine.previewExecution({
+        tenantId: run.tenantId,
+        workflowId: run.workflowId,
+        triggerType: run.triggerType,
+        context: result.context,
+        config: definition.state_config,
+        timezone: resolveTenantTimezone(meta.timezone)
+      });
+      run.stateEvaluationError = null;
+      await run.save();
+      return;
+    }
     const outcome = await stateEngine.processExecution({
       tenantId: run.tenantId,
       workflowId: run.workflowId,
@@ -92,6 +112,13 @@ async function executeRun({ run, runId }) {
   // so a rerun of an older run picks up a currency changed since.
   if (tenant?.settings?.currency) {
     targetRun.context.meta.currency = tenant.settings.currency;
+  }
+  // The inventory report reads its top-products cache by the tenant's Shopify store domain.
+  // Like currency, always the tenant's current value, never one saved on an earlier run.
+  if (tenant?.settings?.shopifyDomain) {
+    targetRun.context.meta.shopifyDomain = tenant.settings.shopifyDomain;
+  } else {
+    delete targetRun.context.meta.shopifyDomain;
   }
   if (!targetRun.context.meta.emailBranding && tenant?.settings?.emailBranding) {
     targetRun.context.meta.emailBranding = { ...tenant.settings.emailBranding };
@@ -171,5 +198,6 @@ module.exports = {
   resolveWorkflowVersion,
   executeRun,
   prepareNotificationMode,
-  applyStateEngine
+  applyStateEngine,
+  isDryRun
 };

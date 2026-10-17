@@ -146,6 +146,7 @@ export const SUPPRESSION_LABELS = {
 export const DELIVERY_LABELS = {
   none: 'No notification',
   suppressed: 'Suppressed',
+  dry_run: 'Dry run, nothing sent',
   pending: 'Pending',
   sending: 'Sending',
   sent: 'Sent',

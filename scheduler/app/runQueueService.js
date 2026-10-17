@@ -28,7 +28,8 @@ async function enqueueRun(params) {
     triggerType = 'manual',
     triggerRef = null,
     overlapPolicy = 'queue_one_pending',
-    maxAttempts = 3
+    maxAttempts = 3,
+    notifyLive = false
   } = params;
 
   const executionKey = getExecutionKey({ tenantId, workflowId });
@@ -66,6 +67,7 @@ async function enqueueRun(params) {
     status,
     triggerType,
     triggerRef,
+    notifyLive: notifyLive === true,
     executionKey,
     context,
     definitionJson,
