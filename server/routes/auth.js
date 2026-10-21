@@ -3,8 +3,9 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { OAuth2Client } = require('google-auth-library');
 const User = require('../models/User');
-const { JWT_SECRET, ALLOWED_EMAIL_DOMAIN, isAllowedEmail } = require('../lib/authConfig');
-const { requireCsrfHeader, resolveUser } = require('../middleware/auth');
+const { JWT_SECRET, ALLOWED_EMAIL_DOMAIN, isAllowedEmail, sessionNeedsRenewal } = require('../lib/authConfig');
+const { buildCookieOptions } = require('../lib/cookieOptions');
+const { requireCsrfHeader, resolveUser, resolveSession } = require('../middleware/auth');
 const { rateLimit } = require('../middleware/rateLimit');
 
 const router = express.Router();
@@ -12,57 +13,6 @@ const router = express.Router();
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 
 const client = new OAuth2Client(GOOGLE_CLIENT_ID);
-
-// 1 Week Cookie Expiry: 7 days * 24 hours * 60 mins * 60 secs * 1000 ms
-const COOKIE_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
-
-const parseBoolean = (value) => {
-  if (value === undefined) return undefined;
-  if (typeof value !== 'string') return Boolean(value);
-
-  const normalized = value.trim().toLowerCase();
-  if (normalized === 'true') return true;
-  if (normalized === 'false') return false;
-  return undefined;
-};
-
-const buildCookieOptions = () => {
-  const isProd = process.env.NODE_ENV === 'production';
-  const configuredSecure = parseBoolean(process.env.COOKIE_SECURE);
-  const configuredSameSite = process.env.COOKIE_SAMESITE;
-  const domain = process.env.COOKIE_DOMAIN;
-
-  let sameSite = configuredSameSite || 'lax';
-  let secure = configuredSecure;
-
-  if (secure === undefined) {
-    secure = isProd;
-  }
-
-  // In production, default to SameSite=None for compatibility with split UI/API domains.
-  if (!configuredSameSite && isProd && secure) {
-    sameSite = 'none';
-  }
-
-  // Browsers reject SameSite=None cookies unless Secure=true.
-  if (sameSite === 'none' && !secure) {
-    sameSite = 'lax';
-  }
-
-  const cookieOptions = {
-    httpOnly: true,
-    secure,
-    sameSite,
-    maxAge: COOKIE_MAX_AGE,
-    path: '/'
-  };
-
-  if (domain) {
-    cookieOptions.domain = domain;
-  }
-
-  return cookieOptions;
-};
 
 // Helper to generate token and set cookie
 const domainError = `Only @${ALLOWED_EMAIL_DOMAIN} accounts can sign in`;
@@ -75,12 +25,12 @@ const ensureAdmin = async (user) => {
   }
 };
 
-const generateTokenAndSetCookie = (res, user) => {
+const generateTokenAndSetCookie = (req, res, user) => {
   const token = jwt.sign({ id: user._id, tv: user.tokenVersion || 0 }, JWT_SECRET, {
     expiresIn: '7d',
     algorithm: 'HS256'
   });
-  res.cookie('token', token, buildCookieOptions());
+  res.cookie('token', token, buildCookieOptions(req));
   return token;
 };
 
@@ -150,7 +100,7 @@ router.post('/signup', authLimiter, async (req, res) => {
     user = new User({ name, email, password: hashedPassword, role: 'admin' });
     await user.save();
 
-    generateTokenAndSetCookie(res, user);
+    generateTokenAndSetCookie(req, res, user);
 
     res.status(201).json({
       message: 'User registered successfully',
@@ -191,7 +141,7 @@ router.post('/login', authLimiter, async (req, res) => {
     }
 
     await ensureAdmin(user);
-    generateTokenAndSetCookie(res, user);
+    generateTokenAndSetCookie(req, res, user);
 
     res.json({ message: 'Logged in successfully', user: publicUser(user) });
   } catch (err) {
@@ -266,7 +216,7 @@ router.post('/google', authLimiter, async (req, res) => {
     }
 
     await ensureAdmin(user);
-    generateTokenAndSetCookie(res, user);
+    generateTokenAndSetCookie(req, res, user);
 
     res.json({ message: 'Logged in via Google successfully', user: publicUser(user) });
   } catch (err) {
@@ -276,18 +226,30 @@ router.post('/google', authLimiter, async (req, res) => {
 });
 
 // @route   GET /auth/me
-// @desc    Get Current User from Cookie
+// @desc    Get Current User from Cookie (and keep an active session alive)
 router.get('/me', async (req, res) => {
+  let session;
   try {
-    const user = await resolveUser(req);
-    if (!user) {
-      return res.status(401).json({ error: 'Not authenticated' });
-    }
-    const { tokenVersion, googleId, ...rest } = user.toObject();
-    res.json(rest);
+    session = await resolveSession(req);
   } catch (err) {
-    res.status(401).json({ error: 'Session invalid or expired' });
+    // The database (or another dependency) failed: the session itself may be perfectly valid. Say so
+    // with a 503 so the UI retries instead of treating the user as logged out.
+    console.error('[auth] /me could not verify the session:', err.message);
+    return res.status(503).json({ error: 'Authentication service is temporarily unavailable' });
   }
+
+  if (!session) {
+    return res.status(401).json({ error: 'Not authenticated' });
+  }
+
+  // Sliding session: renew the cookie once it is a day old, so regular users are not logged out on a
+  // fixed 7-day deadline.
+  if (sessionNeedsRenewal(session.decoded)) {
+    generateTokenAndSetCookie(req, res, session.user);
+  }
+
+  const { tokenVersion, googleId, ...rest } = session.user.toObject();
+  res.json(rest);
 });
 
 // @route   POST /auth/logout
@@ -301,7 +263,7 @@ router.post('/logout', async (req, res) => {
   } catch (err) {
     console.error('Logout revoke error:', err);
   }
-  const cookieOptions = buildCookieOptions();
+  const cookieOptions = buildCookieOptions(req);
   res.clearCookie('token', {
     path: cookieOptions.path,
     domain: cookieOptions.domain,

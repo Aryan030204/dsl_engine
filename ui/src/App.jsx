@@ -17,7 +17,7 @@ import Signup from './pages/Signup';
 import { useAuth } from './context/AuthContext';
 
 function App() {
-  const { user, loading } = useAuth();
+  const { user, loading, authUnavailable, retryAuth } = useAuth();
   const [hasUnsavedChanges, setHasUnsavedChangesState] = useState(false);
   // The ref is updated synchronously so a navigation fired right after a save sees the
   // cleared flag instead of the previous render's state.
@@ -36,6 +36,28 @@ function App() {
     return (
       <div className="min-h-screen bg-slate-900 flex items-center justify-center">
         <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-indigo-500"></div>
+      </div>
+    );
+  }
+
+  // The session could not be checked (server unreachable). Signed-in users must not be dropped to the
+  // login page for that: offer a retry instead.
+  if (authUnavailable) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center p-6">
+        <div className="max-w-sm text-center text-slate-200">
+          <h1 className="text-lg font-semibold mb-2">Can&apos;t reach the server</h1>
+          <p className="text-sm text-slate-400 mb-5">
+            Your session is not affected. The API did not answer; it may be restarting. Try again in a moment.
+          </p>
+          <button
+            type="button"
+            onClick={retryAuth}
+            className="px-4 py-2 rounded-lg bg-indigo-500 hover:bg-indigo-400 text-white text-sm font-medium"
+          >
+            Try again
+          </button>
+        </div>
       </div>
     );
   }
