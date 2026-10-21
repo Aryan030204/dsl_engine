@@ -11,6 +11,26 @@ const generateRuleId = () => `rule_${Date.now()}_${Math.random().toString(36).sl
 // Ensure a rule has an ID - used for backward compatibility
 const ensureRuleId = (rule, idx) => rule._ruleId || `legacy_rule_${idx}`;
 
+// Composite "Step" edges are the one kind of outgoing connection a node may have several of.
+export const isCompositeStepEdge = (edge) =>
+  edge?.label === 'Step' || String(edge?.id || '').startsWith(`${edge?.source}-step-`);
+
+const handleOf = (edge) => edge?.sourceHandle || null;
+
+/**
+ * A node has ONE `next`, and a branch rule / default path ONE target, so drawing a new connection from
+ * a handle that already has one replaces it. Without this the editor kept both lines, but saving only
+ * wrote the first one, so the new connection disappeared when the editor reloaded after the save.
+ */
+export const removeSupersededEdges = (edges, newEdge) => edges.filter((edge) => !(
+  edge.source === newEdge.source
+  && handleOf(edge) === handleOf(newEdge)
+  && !isCompositeStepEdge(edge)
+));
+
+// If duplicates exist anyway (older drafts), the most recently drawn connection (last) wins.
+const lastOf = (list) => (list.length ? list[list.length - 1] : undefined);
+
 /**
  * Converts Backend JSON format to React Flow elements (Nodes + Edges)
  */
@@ -194,7 +214,7 @@ export const graphToJson = (nodes, edges, initialMetadata) => {
       if (backendNode.rules) {
         backendNode.rules = backendNode.rules.map((rule, idx) => {
             const ruleId = rule._ruleId || `legacy_rule_${idx}`;
-            const ruleEdge = outgoingEdges.find(e => e.sourceHandle === `handle-rule-${ruleId}`);
+            const ruleEdge = lastOf(outgoingEdges.filter(e => e.sourceHandle === `handle-rule-${ruleId}`));
             const newRule = { ...rule };
             if (ruleEdge && idMap.has(ruleEdge.target)) {
                 newRule.then = idMap.get(ruleEdge.target);
@@ -205,7 +225,7 @@ export const graphToJson = (nodes, edges, initialMetadata) => {
         });
       }
       
-      const defaultEdge = outgoingEdges.find(e => e.sourceHandle === 'handle-default');
+      const defaultEdge = lastOf(outgoingEdges.filter(e => e.sourceHandle === 'handle-default'));
       
       if (defaultEdge && idMap.has(defaultEdge.target)) {
           // Ensure default object exists and set 'then'
@@ -227,7 +247,7 @@ export const graphToJson = (nodes, edges, initialMetadata) => {
           .map((edge) => idMap.get(edge.target));
       }
 
-      const nextEdge = outgoingEdges.find((edge) => !stepEdges.includes(edge));
+      const nextEdge = lastOf(outgoingEdges.filter((edge) => !stepEdges.includes(edge)));
       if (nextEdge && idMap.has(nextEdge.target)) {
         backendNode.next = idMap.get(nextEdge.target);
       } else {
@@ -235,7 +255,7 @@ export const graphToJson = (nodes, edges, initialMetadata) => {
       }
     } else {
       // Standard nodes
-      const nextEdge = outgoingEdges[0]; // Assuming single output for standard nodes
+      const nextEdge = lastOf(outgoingEdges); // single output for standard nodes: the newest connection wins
       if (nextEdge && idMap.has(nextEdge.target)) {
         backendNode.next = idMap.get(nextEdge.target);
       } else {

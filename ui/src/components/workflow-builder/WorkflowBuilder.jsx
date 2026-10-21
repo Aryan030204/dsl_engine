@@ -8,7 +8,7 @@ import NodeSidebar from './NodeSidebar';
 import WorkflowCanvas from './WorkflowCanvas';
 import PropertiesPanel from './PropertiesPanel';
 import AlertStatePanel from './AlertStatePanel';
-import { jsonToGraph, graphToJson } from '../../utils/workflowTransformers';
+import { jsonToGraph, graphToJson, removeSupersededEdges } from '../../utils/workflowTransformers';
 import {
   buildDefaultBreakdownOutputKey,
 } from '../../constants/workflowOutputKeys';
@@ -196,7 +196,8 @@ function WorkflowBuilderContent({
         // (If we had specific handles for steps, we would check here. 
         // For now, if source is composite and target is not 'final', we might assume...)
         
-        setEdges((eds) => addEdge(newEdge, eds));
+        // Replace the handle's previous connection (see removeSupersededEdges)
+        setEdges((eds) => addEdge(newEdge, removeSupersededEdges(eds, newEdge)));
         setHasUnsavedChanges(true);
     },
     [setEdges, nodes],
