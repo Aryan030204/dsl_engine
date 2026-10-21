@@ -9,6 +9,7 @@ const { collectWorkflowRecipients } = require('../lib/renderStateEmail');
 const { isStateEngineEnabled } = require('../lib/stateEngine/defaults');
 const { resolveTenantTimezone } = require('../../lib/runTimezone');
 const { getDefaultStateEngineService } = require('./stateEngineService');
+const { getRunTimeoutMs, createRunTimeoutError, createRunCanceledError, RUN_CANCELED_CODE } = require('../../lib/runTimeout');
 
 async function resolveWorkflowVersion({ tenantId, workflowId, version }) {
   return workflowResolverService.resolveWorkflowVersion({
@@ -95,6 +96,41 @@ async function applyStateEngine({ run, result, intents, telegramIntents = [], st
   await run.save();
 }
 
+// Cuts a run off at the time limit, or as soon as it is cancelled (isCanceled), even if a node is
+// stuck on a slow query. The runner also stops itself between nodes, so whatever is still in flight
+// finishes harmlessly in the background.
+function executeWithTimeout(promise, timeoutMs, { isCanceled = null, pollMs = 2000 } = {}) {
+  promise.catch(() => {});
+  const timers = [];
+  const guards = [];
+
+  if (timeoutMs > 0) {
+    guards.push(new Promise((_, reject) => {
+      const timer = setTimeout(() => reject(createRunTimeoutError(timeoutMs)), timeoutMs);
+      if (typeof timer.unref === 'function') timer.unref();
+      timers.push(timer);
+    }));
+  }
+  if (typeof isCanceled === 'function') {
+    guards.push(new Promise((_, reject) => {
+      const timer = setInterval(async () => {
+        try {
+          if (await isCanceled()) reject(createRunCanceledError());
+        } catch (error) {
+          // a failed status read must not end the run; try again on the next poll
+        }
+      }, pollMs);
+      if (typeof timer.unref === 'function') timer.unref();
+      timers.push(timer);
+    }));
+  }
+
+  if (!guards.length) return promise;
+  return Promise.race([promise, ...guards]).finally(() => {
+    timers.forEach((timer) => { clearTimeout(timer); clearInterval(timer); });
+  });
+}
+
 async function executeRun({ run, runId }) {
   const targetRun = run || await WorkflowRun.findById(runId);
   if (!targetRun) {
@@ -125,7 +161,17 @@ async function executeRun({ run, runId }) {
   }
   targetRun.markModified('context');
   const notificationMode = prepareNotificationMode(targetRun.definitionJson);
+  const timeoutMs = getRunTimeoutMs();
+  // A newer scheduled run replaces this one by setting its status to `canceled` (enqueueRun).
+  const isCanceled = async () => {
+    const current = await WorkflowRun.findById(targetRun._id).select('status').lean();
+    // A run deleted from the database while it executes counts as cancelled too.
+    return !current || current.status === 'canceled';
+  };
   const runner = new WorkflowRunner(targetRun.definitionJson, {
+    shouldStop: isCanceled,
+    timeoutMs,
+    deadlineAt: timeoutMs > 0 ? Date.now() + timeoutMs : null,
     onNodeResult: payload => nodeOutputs.push(payload),
     workflowResolver: workflowResolverService,
     workflowIdentity: `${targetRun.tenantId}/${targetRun.workflowId}@${targetRun.version}`,
@@ -136,7 +182,10 @@ async function executeRun({ run, runId }) {
   const startedAt = targetRun.startedAt || new Date();
 
   try {
-    const result = await runner.executeWorkflow(targetRun.context);
+    const result = await executeWithTimeout(runner.executeWorkflow(targetRun.context), timeoutMs, { isCanceled });
+
+    // Cancelled while its last node was running: leave it `canceled`, record nothing, notify no one.
+    if (await isCanceled()) throw createRunCanceledError();
 
     targetRun.status = result.status;
     targetRun.context = result.context;
@@ -180,6 +229,9 @@ async function executeRun({ run, runId }) {
 
     return targetRun;
   } catch (error) {
+    // The run was cancelled by a newer one: its status is already `canceled`. Don't overwrite it.
+    if (error.code === RUN_CANCELED_CODE) throw error;
+
     targetRun.status = 'failed';
     targetRun.executionTrace = targetRun.context?.executionTrace || [];
     targetRun.nodeOutputs = nodeOutputs;
@@ -199,5 +251,6 @@ module.exports = {
   executeRun,
   prepareNotificationMode,
   applyStateEngine,
-  isDryRun
+  isDryRun,
+  executeWithTimeout
 };

@@ -164,7 +164,12 @@ export default function RunWorkflowModal({ workflow, onClose }) {
 
     try {
       const result = await executeWorkflow.mutateAsync({ context, mode: 'async', notify: notifyLive });
-      toast.success(`Workflow run started: ${result.runId}`);
+      if (!result.runId) {
+        // The schedule's overlap policy skipped it: a run is already running and one is already waiting.
+        toast.error('Not started: this workflow already has a run in progress and one waiting.');
+        return;
+      }
+      toast.success('Run queued. It starts when the scheduler worker picks it up.');
       onClose();
       navigate(`/workflows/${workflow.workflowId}/runs/${result.runId}`);
     } catch (err) {

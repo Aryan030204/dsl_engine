@@ -1,3 +1,4 @@
+const { createRunTimeoutError, createRunCanceledError } = require('../lib/runTimeout');
 const workflow = require('../workflows/cvr_drop.json');
 const mergeContext = require('./MergeContext');
 const validationNode = require('../nodes/ValidationNode');
@@ -88,6 +89,14 @@ class WorkflowRunner {
     context.executionTrace = context.executionTrace || [];
 
     while (currentNodeId) {
+      // Stop between nodes once the run's time limit has passed (see lib/runTimeout.js).
+      if (this.options.deadlineAt && Date.now() > this.options.deadlineAt) {
+        throw createRunTimeoutError(this.options.timeoutMs || 0);
+      }
+      // Stop between nodes when the run was cancelled (a newer scheduled run replaced it).
+      if (typeof this.options.shouldStop === 'function' && await this.options.shouldStop()) {
+        throw createRunCanceledError();
+      }
       sharedState.totalSteps++;
 
       // --- infinite loop guard ---

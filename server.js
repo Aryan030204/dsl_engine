@@ -25,6 +25,7 @@ const alertsIngestRoutes = require('./server/routes/alertsIngest');
 const { requireAuth, requireTenantAccess, allowIngestToken } = require('./server/middleware/auth');
 const telegramRoutes = require('./server/routes/telegram');
 const { startLinkBot } = require('./server/services/telegramBot');
+const { failTimedOutRuns } = require('./scheduler/app/runQueueService');
 
 const app = express();
 app.set('trust proxy', 1);
@@ -108,6 +109,13 @@ async function start() {
   // Completes "Copy Telegram link" links (/start <token>). API server only: Telegram
   // allows one poller per bot token, so the worker never starts it.
   startLinkBot();
+
+  // Fail runs stuck in `running` past the time limit (e.g. a manual run killed by a restart), so they
+  // can't block their workflow's schedule. The worker does the same; both are idempotent.
+  const sweepRuns = () => failTimedOutRuns().catch((error) => console.warn(`[run-queue] timeout sweep failed: ${error.message}`));
+  sweepRuns();
+  const sweepTimer = setInterval(sweepRuns, 60 * 1000);
+  if (typeof sweepTimer.unref === 'function') sweepTimer.unref();
 
   const port = process.env.PORT || 3000;
   app.listen(port, () => {

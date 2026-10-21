@@ -39,6 +39,7 @@ import EditWorkflowModal from '../components/EditWorkflowModal';
 import { getWorkflowKind, getWorkflowKindLabel, getWorkflowKindStatus } from '../utils/workflowKind';
 import { getWorkflowPurpose, getWorkflowPurposeLabel, isStateEngineEnabled } from '../utils/stateConfig';
 import { WorkflowStateCard } from '../components/StateEngineViews';
+import { describeCron } from '../utils/schedule';
 import toast from 'react-hot-toast';
 
 const SCHEDULE_WINDOW_MODES = {
@@ -49,14 +50,32 @@ const SCHEDULE_WINDOW_MODES = {
   day_to_date_vs_previous_day: {
     label: 'Today Until Scheduled Time vs Yesterday',
     description: 'Current window is 00:00 to the scheduled hour; baseline is yesterday 00:00 to the same hour. Minute offsets are ignored.'
+  }
+};
+
+// Why a due schedule run was not started (see scheduler/app/runQueueService.js overlap policy).
+const SKIP_REASONS = {
+  pending_run_exists: 'the previous run was still running and another was already waiting. Check the Runs page for a stuck run',
+  active_run_exists: 'the previous run was still running',
+  unknown: 'the run could not be queued'
+};
+
+const OVERLAP_POLICIES = {
+  replace_running: {
+    label: 'Cancel the previous run and start the new one',
+    description: 'If the previous run is still going, it is cut off and the new run starts straight away. Best for alerts, where the newest data matters most.'
   },
-  previous_complete_30_days: {
-    label: 'Previous Complete 30 Days',
-    description: 'Current window is the previous 30 complete days; baseline is the 30 days before that.'
+  queue_one_pending: {
+    label: 'Wait for it, then run (keep one waiting)',
+    description: 'The new run waits until the current one finishes. If one is already waiting, extra runs are skipped.'
   },
-  day_to_date_vs_last_30_days_average: {
-    label: 'Today vs Last 30-Day Average',
-    description: 'Current window is today up to the scheduled hour; baseline is the average of the same hours over the previous 30 days.'
+  skip_if_running: {
+    label: 'Skip this run',
+    description: 'If the previous run is still going, this run is skipped.'
+  },
+  allow_parallel: {
+    label: 'Run both at the same time',
+    description: 'Runs never wait for each other. Several can be running at once.'
   }
 };
 
@@ -111,12 +130,14 @@ export default function WorkflowDetailPage() {
   const [selectedVersion, setSelectedVersion] = useState(null);
   const [scheduleForm, setScheduleForm] = useState({
     name: '',
-    overlapPolicy: 'queue_one_pending',
+    overlapPolicy: 'replace_running',
     windowMode: 'previous_complete_day'
   });
   const [scheduleMode, setScheduleMode] = useState('simple');
-  const [selectedPreset, setSelectedPreset] = useState('every_15m');
-  const [customCronExpr, setCustomCronExpr] = useState('*/15 * * * *');
+  // Nothing is pre-selected: a default here used to read like the workflow's active schedule.
+  const [showScheduleForm, setShowScheduleForm] = useState(false);
+  const [selectedPreset, setSelectedPreset] = useState('');
+  const [customCronExpr, setCustomCronExpr] = useState('');
   const [scheduleTargetTenantIds, setScheduleTargetTenantIds] = useState([]);
   const [scheduleJobProgress, setScheduleJobProgress] = useState(null);
   const editorVersion = selectedVersion || workflow?.latestVersion;
@@ -196,14 +217,22 @@ export default function WorkflowDetailPage() {
     }
   };
 
+  const pendingCron = scheduleMode === 'simple'
+    ? (SCHEDULE_PRESETS[selectedPreset]?.cronExpr || '')
+    : customCronExpr.trim();
+
   const handleCreateSchedule = async (e) => {
     e.preventDefault();
     setScheduleJobProgress(null);
 
     try {
       const cronExpr = scheduleMode === 'simple'
-        ? SCHEDULE_PRESETS[selectedPreset].cronExpr
+        ? SCHEDULE_PRESETS[selectedPreset]?.cronExpr
         : customCronExpr.trim();
+      if (!cronExpr) {
+        toast.error('Choose when the schedule should run');
+        return;
+      }
 
       const supportsBulkSchedule = workflowKind === 'multi_tenant' || workflowKind === 'global';
       const selectedTargets = supportsBulkSchedule
@@ -244,6 +273,9 @@ export default function WorkflowDetailPage() {
         toast.success('Schedule created');
       }
       setScheduleForm((prev) => ({ ...prev, name: '' }));
+      setShowScheduleForm(false);
+      setSelectedPreset('');
+      setCustomCronExpr('');
     } catch (err) {
       toast.error(err.response?.data?.error || 'Failed to create schedule');
     } finally {
@@ -431,270 +463,316 @@ export default function WorkflowDetailPage() {
 
           <Card>
             <CardHeader>
-              <CardTitle>Scheduler Configuration</CardTitle>
+              <CardTitle>Schedules</CardTitle>
             </CardHeader>
             <CardContent>
-              <form className="grid grid-cols-1 md:grid-cols-12 gap-2.5" onSubmit={handleCreateSchedule}>
-                <div className="md:col-span-3">
-                  <label className="block text-xs text-gray-500 mb-1">Name</label>
-                  <input
-                    type="text"
-                    value={scheduleForm.name}
-                    onChange={(e) => setScheduleForm((prev) => ({ ...prev, name: e.target.value }))}
-                    className="w-full h-10 border border-gray-300 rounded-lg px-3 text-sm"
-                    placeholder="optional"
-                  />
-                </div>
-                <div className="md:col-span-4">
-                  <label className="block text-xs text-gray-500 mb-1">Schedule Mode</label>
-                  <div className="grid grid-cols-2 gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setScheduleMode('simple')}
-                      className={`w-full h-10 px-3 rounded-lg border text-sm whitespace-nowrap ${
-                        scheduleMode === 'simple'
-                          ? 'border-primary-300 bg-primary-50 text-primary-700'
-                          : 'border-gray-300 bg-white text-gray-700'
-                      }`}
-                    >
-                      Simple
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setScheduleMode('advanced')}
-                      className={`w-full h-10 px-3 rounded-lg border text-sm whitespace-nowrap ${
-                        scheduleMode === 'advanced'
-                          ? 'border-primary-300 bg-primary-50 text-primary-700'
-                          : 'border-gray-300 bg-white text-gray-700'
-                      }`}
-                    >
-                      Advanced
-                    </button>
-                  </div>
-                </div>
-                <div className="md:col-span-3">
-                  <label className="block text-xs text-gray-500 mb-1">Overlap Policy</label>
-                  <select
-                    value={scheduleForm.overlapPolicy}
-                    onChange={(e) => setScheduleForm((prev) => ({ ...prev, overlapPolicy: e.target.value }))}
-                    className="w-full h-10 border border-gray-300 rounded-lg px-3 text-sm"
-                  >
-                    <option value="queue_one_pending">Queue one pending</option>
-                    <option value="skip_if_running">Skip if running</option>
-                    <option value="allow_parallel">Allow parallel</option>
-                  </select>
-                </div>
-                <div className="md:col-span-12">
-                  <label className="block text-xs text-gray-500 mb-1">Window Mode</label>
-                  <select
-                    value={scheduleForm.windowMode}
-                    onChange={(e) => setScheduleForm((prev) => ({ ...prev, windowMode: e.target.value }))}
-                    className="w-full h-12 border border-gray-300 rounded-lg px-3 text-sm"
-                  >
-                    {Object.entries(SCHEDULE_WINDOW_MODES).map(([key, item]) => (
-                      <option key={key} value={key}>{item.label}</option>
-                    ))}
-                  </select>
-                  <p className="text-xs text-gray-500 mt-2">
-                    {SCHEDULE_WINDOW_MODES[scheduleForm.windowMode].description}
-                  </p>
-                </div>
-                {(workflowKind === 'multi_tenant' || workflowKind === 'global') && targetableTenantIds.length > 0 && (
-                  <div className="md:col-span-12 border border-gray-200 rounded-lg p-3">
-                    <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-                      <label className="block text-xs text-gray-500">Target Tenants</label>
-                      <div className="flex gap-2">
-                        <button
-                          type="button"
-                          onClick={selectCurrentScheduleTarget}
-                          className="h-8 px-3 rounded-lg border border-gray-300 bg-white text-xs text-gray-700"
-                        >
-                          Current
-                        </button>
-                        <button
-                          type="button"
-                          onClick={selectAllScheduleTargets}
-                          className="h-8 px-3 rounded-lg border border-gray-300 bg-white text-xs text-gray-700"
-                        >
-                          All
-                        </button>
-                      </div>
-                    </div>
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                      {targetableTenantIds.map((targetTenantId) => (
-                        <label
-                          key={targetTenantId}
-                          className="flex items-center gap-2 rounded border border-gray-200 bg-white px-3 py-2 text-sm"
-                        >
-                          <input
-                            type="checkbox"
-                            checked={scheduleTargetTenantIds.includes(targetTenantId)}
-                            onChange={() => toggleScheduleTargetTenant(targetTenantId)}
-                          />
-                          <span className="truncate" title={targetTenantId}>{targetTenantId}</span>
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                <div className="md:col-span-2 flex items-end">
-                  <Button
-                    type="submit"
-                    size="sm"
-                    className="w-full h-10 whitespace-nowrap"
-                    loading={scheduleIsPending}
-                  >
-                    <CalendarPlus className="w-4 h-4 mr-2" />
-                    Add Schedule
-                  </Button>
-                </div>
-                {scheduleJobProgress && (
-                  <div className="md:col-span-12 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3">
-                    <div className="flex items-center justify-between gap-3 text-sm">
-                      <span className="font-medium text-blue-900">
-                        Creating schedules: {scheduleJobProgress.status}
-                      </span>
-                      <span className="text-blue-700">
-                        {scheduleJobProgress.processedCount || 0}/{scheduleJobProgress.totalCount || 0}
-                        {scheduleJobProgress.failureCount ? `, ${scheduleJobProgress.failureCount} failed` : ''}
-                      </span>
-                    </div>
-                    <div className="mt-2 h-2 rounded-full bg-blue-100 overflow-hidden">
-                      <div
-                        className="h-full bg-blue-600 transition-all"
-                        style={{
-                          width: `${scheduleJobProgress.totalCount
-                            ? Math.min(100, ((scheduleJobProgress.processedCount || 0) / scheduleJobProgress.totalCount) * 100)
-                            : 0}%`
-                        }}
-                      />
-                    </div>
-                  </div>
-                )}
+              <p className="text-xs text-gray-500 mb-4">
+                A schedule runs this workflow automatically. Schedules and queued runs are carried out by the
+                scheduler worker, so it has to be running (<span className="font-mono">npm run start:worker</span>).
+              </p>
 
-                {scheduleMode === 'simple' ? (
-                  <div className="md:col-span-12">
-                    <label className="block text-xs text-gray-500 mb-1">When to run</label>
-                    <select
-                      value={selectedPreset}
-                      onChange={(e) => setSelectedPreset(e.target.value)}
-                      className="w-full h-12 border border-gray-300 rounded-lg px-3 text-sm"
-                    >
-                      {Object.entries(SCHEDULE_PRESETS).map(([key, item]) => (
-                        <option key={key} value={key}>{item.label}</option>
-                      ))}
-                    </select>
-                    <p className="text-xs text-gray-500 mt-2">
-                      {SCHEDULE_PRESETS[selectedPreset].description} ({SCHEDULE_PRESETS[selectedPreset].cronExpr} {schedulerTimeZone})
-                    </p>
-                    {(scheduleForm.windowMode === 'day_to_date_vs_previous_day'
-                      || scheduleForm.windowMode === 'day_to_date_vs_last_30_days_average') && (
-                      <p className="text-xs text-amber-700 mt-1">
-                        Day-to-date analysis snaps to the scheduled hour. For example, a 09:03 run analyzes 00:00 to 09:00 and excludes the current partial hour.
-                      </p>
-                    )}
-                  </div>
-                ) : (
-                  <div className="md:col-span-12">
-                    <label className="block text-xs text-gray-500 mb-1">Cron ({schedulerTimeZone})</label>
-                    <input
-                      type="text"
-                      value={customCronExpr}
-                      onChange={(e) => setCustomCronExpr(e.target.value)}
-                      className="w-full h-12 border border-gray-300 rounded-lg px-3 text-sm font-mono"
-                      placeholder="*/15 * * * *"
-                      required
-                    />
-                    <p className="text-xs text-gray-500 mt-2">
-                      Format: minute hour day-of-month month day-of-week.
-                      Example: <span className="font-mono">0 9 * * 1-5</span> runs weekdays at 09:00 {schedulerTimeZone}.
-                    </p>
-                    {(scheduleForm.windowMode === 'day_to_date_vs_previous_day'
-                      || scheduleForm.windowMode === 'day_to_date_vs_last_30_days_average') && (
-                      <p className="text-xs text-amber-700 mt-1">
-                        For this window mode, minute offsets are allowed. The analysis cutoff is floored to the hour and the current partial hour is excluded.
-                      </p>
-                    )}
-                  </div>
-                )}
-              </form>
-
-              <div className="mt-4 space-y-3">
+              {/* 1. What is already scheduled */}
+              <div className="space-y-3">
                 {schedulesLoading ? (
                   <p className="text-sm text-gray-500">Loading schedules...</p>
                 ) : schedules.length === 0 ? (
-                  <p className="text-sm text-gray-500">No schedules configured.</p>
+                  <p className="text-sm text-gray-500">This workflow has no schedule yet, so it only runs when you start it.</p>
                 ) : (
-                  schedules.map((schedule) => (
-                    <div
-                      key={schedule._id}
-                      className="border border-gray-200 rounded-lg p-3 bg-gray-50"
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <div>
-                          <p className="font-medium text-gray-900">{schedule.name || 'Untitled Schedule'}</p>
-                          <p className="text-xs text-gray-500 font-mono">{schedule.cronExpr} ({schedule.timezone || 'UTC'})</p>
-                          <p className="text-xs text-gray-500 mt-1">
-                            {SCHEDULE_WINDOW_MODES[schedule.windowMode || 'previous_complete_day']?.label || schedule.windowMode}
-                          </p>
+                  schedules.map((schedule) => {
+                    const timezone = schedule.timezone || 'UTC';
+                    const windowMode = SCHEDULE_WINDOW_MODES[schedule.windowMode || 'previous_complete_day'];
+                    return (
+                      <div
+                        key={schedule._id}
+                        className="border border-gray-200 rounded-lg p-4 bg-gray-50"
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <p className="font-medium text-gray-900">{schedule.name || 'Untitled schedule'}</p>
+                            <p className="text-sm text-gray-800 mt-1">
+                              {describeCron(schedule.cronExpr) || `Cron ${schedule.cronExpr}`}
+                              <span className="text-gray-500"> ({timezone})</span>
+                            </p>
+                            <p className="text-xs text-gray-500 mt-1">
+                              Analyses: {windowMode?.label || schedule.windowMode}
+                            </p>
+                            <p className="text-xs text-gray-500 mt-1">
+                              If a run is still going: {OVERLAP_POLICIES[schedule.overlapPolicy]?.label || schedule.overlapPolicy}
+                            </p>
+                            <p className="text-xs text-gray-400 mt-1 font-mono">cron: {schedule.cronExpr}</p>
+                          </div>
+                          <Badge status={schedule.isActive ? 'active' : 'inactive'}>
+                            {schedule.isActive ? 'Active' : 'Paused'}
+                          </Badge>
                         </div>
-                        <Badge status={schedule.isActive ? 'active' : 'inactive'}>
-                          {schedule.isActive ? 'Active' : 'Paused'}
-                        </Badge>
-                      </div>
 
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs text-gray-500 mt-2">
-                        <p>
-                          Next Run: {formatScheduleDate(schedule.nextRunAt, schedule.timezone || 'UTC')}
-                        </p>
-                        <p>
-                          Last Trigger: {formatScheduleDate(schedule.lastTriggeredAt, schedule.timezone || 'UTC')}
-                        </p>
-                      </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs text-gray-600 mt-3">
+                          <p>Next run: <span className="font-medium">{formatScheduleDate(schedule.nextRunAt, timezone)}</span></p>
+                          <p>Last run started: <span className="font-medium">{formatScheduleDate(schedule.lastTriggeredAt, timezone)}</span></p>
+                        </div>
 
-                      <div className="flex flex-wrap gap-2 mt-3">
-                        {schedule.isActive ? (
-                          <Button
-                            size="sm"
-                            variant="secondary"
-                            onClick={() => handlePauseSchedule(schedule._id)}
-                            loading={pauseSchedule.isPending}
-                          >
-                            <Pause className="w-3 h-3 mr-1" />
-                            Pause
-                          </Button>
-                        ) : (
-                          <Button
-                            size="sm"
-                            variant="secondary"
-                            onClick={() => handleResumeSchedule(schedule._id)}
-                            loading={resumeSchedule.isPending}
-                          >
-                            <PlayCircle className="w-3 h-3 mr-1" />
-                            Resume
-                          </Button>
+                        {schedule.metadata?.lastSkipReason && (
+                          <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-3 py-2 mt-3">
+                            The run due {formatScheduleDate(schedule.metadata.lastSkippedAt, timezone)} did not start:{' '}
+                            {SKIP_REASONS[schedule.metadata.lastSkipReason] || schedule.metadata.lastSkipReason}.
+                          </p>
                         )}
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => handleReplayMissed(schedule._id)}
-                          loading={replayMissed.isPending}
-                        >
-                          <RefreshCw className="w-3 h-3 mr-1" />
-                          Replay Missed
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="danger"
-                          onClick={() => handleDeleteSchedule(schedule._id, schedule.name)}
-                          loading={deleteSchedule.isPending}
-                        >
-                          <Trash2 className="w-3 h-3 mr-1" />
-                          Delete
-                        </Button>
+
+                        <div className="flex flex-wrap gap-2 mt-3">
+                          {schedule.isActive ? (
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              onClick={() => handlePauseSchedule(schedule._id)}
+                              loading={pauseSchedule.isPending}
+                            >
+                              <Pause className="w-3 h-3 mr-1" />
+                              Pause
+                            </Button>
+                          ) : (
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              onClick={() => handleResumeSchedule(schedule._id)}
+                              loading={resumeSchedule.isPending}
+                            >
+                              <PlayCircle className="w-3 h-3 mr-1" />
+                              Resume
+                            </Button>
+                          )}
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => handleReplayMissed(schedule._id)}
+                            loading={replayMissed.isPending}
+                            title="Run the scheduled times that were missed while the worker was not running"
+                          >
+                            <RefreshCw className="w-3 h-3 mr-1" />
+                            Replay missed runs
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="danger"
+                            onClick={() => handleDeleteSchedule(schedule._id, schedule.name)}
+                            loading={deleteSchedule.isPending}
+                          >
+                            <Trash2 className="w-3 h-3 mr-1" />
+                            Delete
+                          </Button>
+                        </div>
                       </div>
+                    );
+                  })
+                )}
+              </div>
+
+              {/* 2. Add another one, step by step */}
+              <div className="mt-5 pt-4 border-t border-gray-200">
+                {!showScheduleForm ? (
+                  <Button type="button" size="sm" variant="secondary" onClick={() => setShowScheduleForm(true)}>
+                    <CalendarPlus className="w-4 h-4 mr-2" />
+                    Add a schedule
+                  </Button>
+                ) : (
+                  <form className="space-y-5" onSubmit={handleCreateSchedule}>
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-sm font-semibold text-gray-900">New schedule</h3>
+                      <button
+                        type="button"
+                        onClick={() => setShowScheduleForm(false)}
+                        className="text-xs text-gray-500 hover:text-gray-700"
+                      >
+                        Cancel
+                      </button>
                     </div>
-                  ))
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Name <span className="text-gray-400 font-normal">(optional)</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={scheduleForm.name}
+                        onChange={(e) => setScheduleForm((prev) => ({ ...prev, name: e.target.value }))}
+                        className="w-full h-10 border border-gray-300 rounded-lg px-3 text-sm"
+                        placeholder="e.g. Morning check"
+                      />
+                    </div>
+
+                    {/* Step 1: when */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">1. When should it run?</label>
+                      <div className="flex gap-2 mb-2">
+                        <button
+                          type="button"
+                          onClick={() => setScheduleMode('simple')}
+                          className={`h-9 px-3 rounded-lg border text-sm ${
+                            scheduleMode === 'simple'
+                              ? 'border-primary-300 bg-primary-50 text-primary-700'
+                              : 'border-gray-300 bg-white text-gray-700'
+                          }`}
+                        >
+                          Pick a common schedule
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setScheduleMode('advanced')}
+                          className={`h-9 px-3 rounded-lg border text-sm ${
+                            scheduleMode === 'advanced'
+                              ? 'border-primary-300 bg-primary-50 text-primary-700'
+                              : 'border-gray-300 bg-white text-gray-700'
+                          }`}
+                        >
+                          Custom (cron)
+                        </button>
+                      </div>
+                      {scheduleMode === 'simple' ? (
+                        <select
+                          value={selectedPreset}
+                          onChange={(e) => setSelectedPreset(e.target.value)}
+                          className="w-full h-10 border border-gray-300 rounded-lg px-3 text-sm"
+                          required
+                        >
+                          <option value="" disabled>Choose when to run...</option>
+                          {Object.entries(SCHEDULE_PRESETS).map(([key, item]) => (
+                            <option key={key} value={key}>{item.label}</option>
+                          ))}
+                        </select>
+                      ) : (
+                        <>
+                          <input
+                            type="text"
+                            value={customCronExpr}
+                            onChange={(e) => setCustomCronExpr(e.target.value)}
+                            className="w-full h-10 border border-gray-300 rounded-lg px-3 text-sm font-mono"
+                            placeholder="3 11,14,17 * * *"
+                            required
+                          />
+                          <p className="text-xs text-gray-500 mt-1">
+                            Five fields: minute hour day-of-month month day-of-week. For example
+                            <span className="font-mono"> 0 9 * * 1-5</span> is weekdays at 09:00.
+                          </p>
+                        </>
+                      )}
+                      <p className={`text-xs mt-2 ${pendingCron ? 'text-gray-700' : 'text-gray-400'}`}>
+                        {pendingCron
+                          ? `This will run: ${describeCron(pendingCron) || `cron ${pendingCron}`} (${schedulerTimeZone})`
+                          : 'Nothing chosen yet.'}
+                      </p>
+                    </div>
+
+                    {/* Step 2: which period */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">2. Which period should each run analyse?</label>
+                      <select
+                        value={scheduleForm.windowMode}
+                        onChange={(e) => setScheduleForm((prev) => ({ ...prev, windowMode: e.target.value }))}
+                        className="w-full h-10 border border-gray-300 rounded-lg px-3 text-sm"
+                      >
+                        {Object.entries(SCHEDULE_WINDOW_MODES).map(([key, item]) => (
+                          <option key={key} value={key}>{item.label}</option>
+                        ))}
+                      </select>
+                      <p className="text-xs text-gray-500 mt-1">
+                        {SCHEDULE_WINDOW_MODES[scheduleForm.windowMode].description}
+                      </p>
+                      {(scheduleForm.windowMode === 'day_to_date_vs_previous_day'
+                        ) && (
+                        <p className="text-xs text-amber-700 mt-1">
+                          The period ends at the start of the scheduled hour, so a 09:03 run analyses 00:00 to 09:00. The minutes
+                          do not change the period.
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Step 3: overlap */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">3. If the previous run is still going when the next one is due</label>
+                      <select
+                        value={scheduleForm.overlapPolicy}
+                        onChange={(e) => setScheduleForm((prev) => ({ ...prev, overlapPolicy: e.target.value }))}
+                        className="w-full h-10 border border-gray-300 rounded-lg px-3 text-sm"
+                      >
+                        {Object.entries(OVERLAP_POLICIES).map(([key, item]) => (
+                          <option key={key} value={key}>{item.label}</option>
+                        ))}
+                      </select>
+                      <p className="text-xs text-gray-500 mt-1">{OVERLAP_POLICIES[scheduleForm.overlapPolicy].description}</p>
+                    </div>
+
+                    {(workflowKind === 'multi_tenant' || workflowKind === 'global') && targetableTenantIds.length > 0 && (
+                      <div className="border border-gray-200 rounded-lg p-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                          <label className="block text-sm font-medium text-gray-700">Which tenants?</label>
+                          <div className="flex gap-2">
+                            <button
+                              type="button"
+                              onClick={selectCurrentScheduleTarget}
+                              className="h-8 px-3 rounded-lg border border-gray-300 bg-white text-xs text-gray-700"
+                            >
+                              Current
+                            </button>
+                            <button
+                              type="button"
+                              onClick={selectAllScheduleTargets}
+                              className="h-8 px-3 rounded-lg border border-gray-300 bg-white text-xs text-gray-700"
+                            >
+                              All
+                            </button>
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                          {targetableTenantIds.map((targetTenantId) => (
+                            <label
+                              key={targetTenantId}
+                              className="flex items-center gap-2 rounded border border-gray-200 bg-white px-3 py-2 text-sm"
+                            >
+                              <input
+                                type="checkbox"
+                                checked={scheduleTargetTenantIds.includes(targetTenantId)}
+                                onChange={() => toggleScheduleTargetTenant(targetTenantId)}
+                              />
+                              <span className="truncate" title={targetTenantId}>{targetTenantId}</span>
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {scheduleJobProgress && (
+                      <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3">
+                        <div className="flex items-center justify-between gap-3 text-sm">
+                          <span className="font-medium text-blue-900">
+                            Creating schedules: {scheduleJobProgress.status}
+                          </span>
+                          <span className="text-blue-700">
+                            {scheduleJobProgress.processedCount || 0}/{scheduleJobProgress.totalCount || 0}
+                            {scheduleJobProgress.failureCount ? `, ${scheduleJobProgress.failureCount} failed` : ''}
+                          </span>
+                        </div>
+                        <div className="mt-2 h-2 rounded-full bg-blue-100 overflow-hidden">
+                          <div
+                            className="h-full bg-blue-600 transition-all"
+                            style={{
+                              width: `${scheduleJobProgress.totalCount
+                                ? Math.min(100, ((scheduleJobProgress.processedCount || 0) / scheduleJobProgress.totalCount) * 100)
+                                : 0}%`
+                            }}
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="flex gap-2">
+                      <Button type="submit" size="sm" className="whitespace-nowrap" loading={scheduleIsPending} disabled={!pendingCron}>
+                        <CalendarPlus className="w-4 h-4 mr-2" />
+                        Create schedule
+                      </Button>
+                      <Button type="button" size="sm" variant="ghost" onClick={() => setShowScheduleForm(false)}>
+                        Cancel
+                      </Button>
+                    </div>
+                  </form>
                 )}
               </div>
             </CardContent>
