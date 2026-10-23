@@ -24,6 +24,7 @@ const schedulerRoutes = require('./server/routes/scheduler');
 const alertsIngestRoutes = require('./server/routes/alertsIngest');
 const { requireAuth, requireTenantAccess, allowIngestToken } = require('./server/middleware/auth');
 const telegramRoutes = require('./server/routes/telegram');
+const emailConfigRoutes = require('./server/routes/emailConfig');
 const { startLinkBot } = require('./server/services/telegramBot');
 const { failTimedOutRuns } = require('./scheduler/app/runQueueService');
 
@@ -79,6 +80,7 @@ app.use('/tenants', requireAuth);
 app.use('/tenants/:tenantId', requireTenantAccess);
 app.use('/workflows', requireAuth);
 app.use('/telegram', requireAuth);
+app.use('/email-config', requireAuth);
 
 app.use('/tenants', tenantRoutes);
 app.use('/workflows/global', globalWorkflowRoutes);
@@ -90,6 +92,7 @@ app.use('/tenants/:tenantId/insights', insightRoutes);
 app.use('/tenants/:tenantId/triggers', triggerRoutes);
 app.use('/tenants/:tenantId/scheduler', schedulerRoutes);
 app.use('/telegram', telegramRoutes);
+app.use('/email-config', emailConfigRoutes);
 
 app.use((err, req, res, next) => {
   const status = err.status || 500;

@@ -29,7 +29,8 @@ async function EmailNode(def, context, runtime = {}) {
   }
   // 'deferred': a state-engine workflow captured this send (server/lib/
   // notificationCapture.js); whether it goes out is decided after the run.
-  if (!delivery || (delivery.status !== 'sent' && delivery.status !== 'deferred')) {
+  // 'skipped': every recipient had paused or muted these emails (server/services/recipientPolicy.js).
+  if (!delivery || (delivery.status !== 'sent' && delivery.status !== 'deferred' && delivery.status !== 'skipped')) {
     return { status: 'fail', reason: `EmailNode: ${delivery?.error || 'email delivery failed'}`, delivery };
   }
 

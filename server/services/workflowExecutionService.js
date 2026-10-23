@@ -10,6 +10,7 @@ const { isStateEngineEnabled } = require('../lib/stateEngine/defaults');
 const { resolveTenantTimezone } = require('../../lib/runTimezone');
 const { getDefaultStateEngineService } = require('./stateEngineService');
 const { getRunTimeoutMs, createRunTimeoutError, createRunCanceledError, RUN_CANCELED_CODE } = require('../../lib/runTimeout');
+const { getDefaultRecipientPolicy } = require('./recipientPolicy');
 
 async function resolveWorkflowVersion({ tenantId, workflowId, version }) {
   return workflowResolverService.resolveWorkflowVersion({
@@ -175,7 +176,13 @@ async function executeRun({ run, runId }) {
     onNodeResult: payload => nodeOutputs.push(payload),
     workflowResolver: workflowResolverService,
     workflowIdentity: `${targetRun.tenantId}/${targetRun.workflowId}@${targetRun.version}`,
-    emailSender: notificationMode.capture?.sender,
+    // State-engine workflows capture sends (filtered per person when delivered). Everything else sends
+    // inline, so pause / mute are applied here.
+    emailSender: notificationMode.capture?.sender
+      || getDefaultRecipientPolicy().createPreferenceAwareSender(
+        (message) => require('./emailService').sendEmail(message),
+        { tenantId: targetRun.tenantId, workflowId: targetRun.workflowId }
+      ),
     telegramSender: notificationMode.capture?.telegramSender
   });
 

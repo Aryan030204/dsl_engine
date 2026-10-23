@@ -28,6 +28,7 @@ function formatDate(value, pattern = 'MMM d, HH:mm') {
 // One line saying what the engine decided to do about notifying.
 const SKIPPED_LABELS = {
   no_notification_on_path: 'this run reached no email or messaging step',
+  recipients_opted_out: 'everyone on this alert has paused or muted these emails (Email Configurations)',
 };
 
 function describeNotification(notification, deliveryStatus, skippedReason) {

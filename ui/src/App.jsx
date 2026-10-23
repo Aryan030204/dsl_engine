@@ -11,6 +11,7 @@ import RunDetailPage from './pages/RunDetailPage';
 import InsightsPage from './pages/InsightsPage';
 import SettingsPage from './pages/SettingsPage';
 import ShopifyHubPage from './pages/ShopifyHubPage';
+import EmailConfigurationsPage from './pages/EmailConfigurationsPage';
 import WorkflowBuilderPage from './pages/WorkflowBuilderPage';
 import Login from './pages/Login';
 import Signup from './pages/Signup';
@@ -91,6 +92,7 @@ function App() {
           <Route path="/insights" element={<InsightsPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/shopify-hub" element={<ShopifyHubPage />} />
+          <Route path="/email-configurations" element={<EmailConfigurationsPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </Layout>

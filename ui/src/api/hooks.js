@@ -7,7 +7,8 @@ import {
   scheduleApi,
   schedulerApi,
   triggerApi,
-  stateApi
+  stateApi,
+  emailConfigApi
 } from './endpoints';
 import { useTenant } from '../context/TenantContext';
 
@@ -450,3 +451,36 @@ export function useInsights() {
     queryFn: () => insightApi.list(tenantId),
   });
 }
+
+// ============ Email Configurations ============
+
+const EMAIL_CONFIG_KEY = ['emailConfig'];
+
+export function useEmailRecipients() {
+  return useQuery({ queryKey: [...EMAIL_CONFIG_KEY, 'recipients'], queryFn: emailConfigApi.listRecipients });
+}
+
+export function useEmailRecipient(email) {
+  return useQuery({
+    queryKey: [...EMAIL_CONFIG_KEY, 'recipient', email],
+    queryFn: () => emailConfigApi.getRecipient(email),
+    enabled: !!email,
+  });
+}
+
+export function useEmailConfigWorkflows(enabled = true) {
+  return useQuery({ queryKey: [...EMAIL_CONFIG_KEY, 'workflows'], queryFn: emailConfigApi.listWorkflows, enabled });
+}
+
+// Every change refreshes all Email Configurations data (people, a person, the by-workflow view).
+function useEmailConfigMutation(mutationFn) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: EMAIL_CONFIG_KEY }),
+  });
+}
+
+export const useUpdateEmailPreferences = () => useEmailConfigMutation(({ email, patch }) => emailConfigApi.updatePreferences(email, patch));
+export const useSetEmailMute = () => useEmailConfigMutation(({ email, workflowKey, muted }) => emailConfigApi.setMute(email, workflowKey, muted));
+export const useChangeEmailWorkflows = () => useEmailConfigMutation(({ email, add, remove }) => emailConfigApi.changeWorkflows(email, { add, remove }));

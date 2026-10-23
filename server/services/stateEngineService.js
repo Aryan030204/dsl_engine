@@ -147,6 +147,9 @@ function createStateEngineService({
   store = createMongoStateStore(),
   sender = (...args) => require('./emailService').sendEmail(...args),
   telegramSender = (...args) => require('./telegramService').sendTelegram(...args),
+  // Per-person pause / mute / severity rules (server/services/recipientPolicy.js). Null = send to everyone
+  // the workflow lists; getDefaultStateEngineService() passes the real policy.
+  recipientPolicy = null,
   now = () => new Date(),
   maxCasAttempts = DEFAULT_MAX_CAS_ATTEMPTS
 } = {}) {
@@ -316,11 +319,26 @@ function createStateEngineService({
     // messaging node sends Telegram and no email.
     const emailWanted = intents.length > 0;
     const email = emailWanted
-      ? await deliverEmail({ decision, intents, fallbackRecipients, workflowName, brandName, branding })
+      ? await deliverEmail({ decision, intents, fallbackRecipients, workflowName, brandName, branding, tenantId, workflowId })
       : null;
     const telegram = telegramIntents.length ? await deliverTelegram(telegramIntents) : null;
 
-    const channels = [email, telegram].filter(Boolean);
+    // An email channel whose every recipient paused or muted these emails is not a failure and not a
+    // delivery: it simply did not happen. If that was the only channel, hand the cooldown back like
+    // any alert nobody received.
+    const suppressedRecipients = email?.suppressed || [];
+    const channels = [email, telegram].filter((channel) => channel && channel.status !== 'skipped');
+    if (!channels.length) {
+      const rolledBack = await rollbackBookkeeping({ tenantId, workflowId, decision });
+      await store.updateDelivery(tenantId, workflowId, executionId, {
+        status: 'none',
+        skipped_reason: 'recipients_opted_out',
+        suppressed_recipients: suppressedRecipients,
+        rolled_back: rolledBack,
+        error: null
+      });
+      return { status: 'none', skippedReason: 'recipients_opted_out', suppressed: suppressedRecipients, rolledBack, to: [], subject: null, messageId: null, email, telegram: null };
+    }
     const sentCount = channels.filter((channel) => channel.status === 'sent').length;
     const anyDelivered = channels.some((channel) => channel.status === 'sent' || channel.status === 'partial');
     let overall = 'failed';
@@ -344,6 +362,7 @@ function createStateEngineService({
       sent_at: anyDelivered ? now() : null,
       error,
       rolled_back: rolledBack,
+      ...(suppressedRecipients.length ? { suppressed_recipients: suppressedRecipients } : {}),
       ...(telegram ? { telegram: { status: telegram.status, error: telegram.error || null, messages: telegram.count } } : {})
     });
 
@@ -359,9 +378,24 @@ function createStateEngineService({
     };
   }
 
-  async function deliverEmail({ decision, intents, fallbackRecipients, workflowName, brandName, branding }) {
+  async function deliverEmail({ decision, intents, fallbackRecipients, workflowName, brandName, branding, tenantId, workflowId }) {
     const email = renderStateEmail({ decision, intents, fallbackRecipients, workflowName, brandName, branding });
-    const base = { channel: 'email', to: email.to, subject: email.subject };
+    let suppressed = [];
+    if (recipientPolicy && email.to.length) {
+      // The decision's state is the alert's severity (TRIGGERED / CRITICAL) for the severity filter.
+      const filtered = await recipientPolicy.applyRecipientPreferences({
+        recipients: email.to,
+        tenantId,
+        workflowId,
+        severity: decision.resulting_state
+      });
+      suppressed = filtered.suppressed;
+      email.to = filtered.allowed;
+      if (!email.to.length) {
+        return { channel: 'email', status: 'skipped', to: [], subject: email.subject, suppressed };
+      }
+    }
+    const base = { channel: 'email', to: email.to, subject: email.subject, ...(suppressed.length ? { suppressed } : {}) };
     if (!email.to.length) {
       // Nothing to send to: no email node ran and none of the workflow's nodes has
       // email turned on (e.g. an insight node with "Email Insight" unticked).
@@ -413,7 +447,11 @@ function createStateEngineService({
 
 let defaultService = null;
 function getDefaultStateEngineService() {
-  if (!defaultService) defaultService = createStateEngineService();
+  if (!defaultService) {
+    defaultService = createStateEngineService({
+      recipientPolicy: require('./recipientPolicy').getDefaultRecipientPolicy()
+    });
+  }
   return defaultService;
 }
 

@@ -287,3 +287,40 @@ export const insightApi = {
     return data.insights;
   },
 };
+
+// Email Configurations: who receives which workflow's emails, plus per-person settings.
+export const emailConfigApi = {
+  listRecipients: async () => {
+    const { data } = await api.get('/email-config/recipients');
+    return data.recipients;
+  },
+
+  getRecipient: async (email) => {
+    const { data } = await api.get(`/email-config/recipients/${encodeURIComponent(email)}`);
+    return data;
+  },
+
+  listWorkflows: async () => {
+    const { data } = await api.get('/email-config/workflows');
+    return data.workflows;
+  },
+
+  updatePreferences: async (email, patch) => {
+    const { data } = await api.put(`/email-config/recipients/${encodeURIComponent(email)}/preferences`, patch);
+    return data.preferences;
+  },
+
+  setMute: async (email, workflowKey, muted) => {
+    const { data } = await api.put(
+      `/email-config/recipients/${encodeURIComponent(email)}/workflows/${encodeURIComponent(workflowKey)}/mute`,
+      { muted }
+    );
+    return data;
+  },
+
+  // add / remove: lists of workflow keys. Each workflow that changes gets a new version.
+  changeWorkflows: async (email, { add = [], remove = [] }) => {
+    const { data } = await api.post(`/email-config/recipients/${encodeURIComponent(email)}/workflows`, { add, remove });
+    return data.results;
+  },
+};
