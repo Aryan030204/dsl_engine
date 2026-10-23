@@ -1580,6 +1580,7 @@ export default function PropertiesPanel({
                        <select value={data.analysis_mode || 'sales'} onChange={(e) => handleChange('analysis_mode', e.target.value)} className="w-full border text-sm p-2 rounded bg-white">
                          <option value="sales">Sales performance</option>
                          <option value="inventory">Inventory coverage</option>
+                         <option value="web_vitals">Web vitals (top pages)</option>
                        </select>
                      </div>
                      {data.analysis_mode === 'inventory' ? (
@@ -1591,6 +1592,12 @@ export default function PropertiesPanel({
                          <div><label className="block text-xs font-medium text-gray-600 mb-1">Critical at or below (DOH days)</label><input type="number" min="0" step="0.5" value={data.critical_doh_days ?? 7} onChange={(e) => handleChange('critical_doh_days', Number(e.target.value))} className="w-full border p-2 rounded text-sm" /></div>
                          <div><label className="block text-xs font-medium text-gray-600 mb-1">Healthy at or above (DOH days)</label><input type="number" min="0" step="0.5" value={data.healthy_doh_days ?? 15} onChange={(e) => handleChange('healthy_doh_days', Number(e.target.value))} className="w-full border p-2 rounded text-sm" /></div>
                          <div><label className="block text-xs font-medium text-gray-600 mb-1">Output Key (optional)</label><OutputKeyInput value={data.output_key || ''} onChange={(nextValue) => handleChange('output_key', nextValue)} placeholder="inventory_top_products" suggestions={['inventory_top_products']} /></div>
+                       </div>
+                     ) : data.analysis_mode === 'web_vitals' ? (
+                       <div className="space-y-3 rounded border border-emerald-200 bg-emerald-50 p-3">
+                         <p className="text-xs text-emerald-900">Reads the web vitals table for the run's reporting window. Pages are ranked by sessions; the performance score is averaged over the day's snapshots, and sessions and CVR come from the full-day sessions table.</p>
+                         <div><label className="block text-xs font-medium text-gray-600 mb-1">Top pages to include</label><input type="number" min="1" max="50" value={data.web_vitals_top_k ?? 5} onChange={(e) => handleChange('web_vitals_top_k', Number(e.target.value))} className="w-full border p-2 rounded text-sm" /></div>
+                         <div><label className="block text-xs font-medium text-gray-600 mb-1">Output Key (optional)</label><OutputKeyInput value={data.output_key || ''} onChange={(nextValue) => handleChange('output_key', nextValue)} placeholder="web_vitals_pages" suggestions={['web_vitals_pages']} /></div>
                        </div>
                      ) : (
                      <>

@@ -1,6 +1,32 @@
 // sql/QueryBuilder.js
 const templates = require('./templates');
 
+// A window bound as the brand's local { date: 'YYYY-MM-DD', time: 'HH:mm:ss' }. Scheduler windows
+// are UTC instants ('...Z'); a bare 'YYYY-MM-DD HH:mm:ss' is already local.
+function localDateTime(value, timezone) {
+  const text = String(value || '');
+  const bare = text.match(/^(\d{4}-\d{2}-\d{2})(?:[ T](\d{2}:\d{2}:\d{2}))?(?:\.\d+)?$/);
+  if (bare) return { date: bare[1], time: bare[2] || '00:00:00' };
+  const instant = new Date(text);
+  if (!text || Number.isNaN(instant.getTime())) return null;
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', {
+    timeZone: timezone || 'UTC', hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit'
+  }).formatToParts(instant).map((part) => [part.type, part.value]));
+  return { date: `${parts.year}-${parts.month}-${parts.day}`, time: `${parts.hour}:${parts.minute}:${parts.second}` };
+}
+
+// The brand's local days a window covers. `date` columns are local days: a window that ends at
+// local midnight excludes that day, one that ends mid-day includes it.
+function localDayRange(window, timezone, label) {
+  const start = localDateTime(window?.start, timezone);
+  const end = localDateTime(window?.end, timezone);
+  if (!start || !end) {
+    throw new Error(`${label}: window.start and window.end must be valid dates (YYYY-MM-DD...)`);
+  }
+  return { start: start.date, end: end.date, endOperator: end.time === '00:00:00' ? '<' : '<=' };
+}
+
 module.exports = {
   buildMetricQuery({ tenantId, metrics, window, baselineWindow, timezone, filters = [] }) {
     return templates.metricQuery({
@@ -67,6 +93,59 @@ module.exports = {
       `,
       params: ids ? [ids] : [],
       meta: { tenantId, type: 'inventory_product_breakdown', topK: ids ? ids.length : safeTopK }
+    };
+  },
+
+  // Page speed per page over a day range. web_vitals_summary holds a few snapshots per day
+  // (each the top pages by same-day cumulative sessions), so the score is averaged over the
+  // snapshots a page appears in. The caller ranks the pages (by full-day sessions), so up to
+  // `limit` pages come back unranked. INP is not selected: the source never fills it.
+  buildWebVitalsQuery({ tenantId, window, timezone = 'UTC', limit = 50 } = {}) {
+    if (!tenantId) throw new Error('webVitalsQuery: tenantId is required (db selector)');
+    const days = localDayRange(window, timezone, 'webVitalsQuery');
+    const safeLimit = Math.max(1, Math.min(50, Math.floor(Number(limit) || 50)));
+    return {
+      sql: `
+        SELECT
+          page_name,
+          MAX(url) AS url,
+          MAX(sessions) AS sessions,
+          AVG(performance) AS performance,
+          COUNT(*) AS snapshots
+        FROM web_vitals_summary
+        WHERE \`date\` >= ? AND \`date\` ${days.endOperator} ?
+        GROUP BY page_name
+        ORDER BY MAX(sessions) DESC, page_name ASC
+        LIMIT ${safeLimit}
+      `,
+      params: [days.start, days.end],
+      meta: { tenantId, type: 'web_vitals_pages', limit: safeLimit }
+    };
+  },
+
+  // Full-day sessions and conversion rate per landing page path. conversion_rate_pct is already a
+  // percentage per path and day, so a multi-day window weights it by sessions. product_id is NULL
+  // for non-product paths (home, collections), whose rate the table does not track.
+  buildPagePathCvrQuery({ tenantId, window, timezone = 'UTC', paths } = {}) {
+    if (!tenantId) throw new Error('pagePathCvrQuery: tenantId is required (db selector)');
+    const days = localDayRange(window, timezone, 'pagePathCvrQuery');
+    const safePaths = Array.isArray(paths)
+      ? [...new Set(paths.map((path) => String(path)).filter(Boolean))].slice(0, 100)
+      : [];
+    if (!safePaths.length) throw new Error('pagePathCvrQuery: paths is required');
+    return {
+      sql: `
+        SELECT
+          landing_page_path,
+          MAX(product_id) AS product_id,
+          SUM(sessions) AS sessions,
+          SUM(sessions * conversion_rate_pct) / NULLIF(SUM(sessions), 0) AS cvr_pct
+        FROM mv_product_sessions_by_path_daily
+        WHERE \`date\` >= ? AND \`date\` ${days.endOperator} ? AND landing_page_path IN (?)
+        GROUP BY landing_page_path
+      `,
+      params: [days.start, days.end, safePaths],
+      meta: { tenantId, type: 'page_path_cvr', paths: safePaths.length }
     };
   }
 };

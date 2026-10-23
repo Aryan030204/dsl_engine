@@ -653,8 +653,18 @@ function validateWorkflowDefinition(definition) {
     }
 
     if (node.type === 'recursive_dimension_breakdown') {
-      if (node.analysis_mode !== undefined && !['sales', 'inventory'].includes(node.analysis_mode)) {
+      if (node.analysis_mode !== undefined && !['sales', 'inventory', 'web_vitals'].includes(node.analysis_mode)) {
         errors.push(`recursive_dimension_breakdown node ${node.id} has invalid analysis_mode`);
+      }
+      if (node.analysis_mode === 'web_vitals') {
+        const topK = node.web_vitals_top_k ?? 5;
+        if (!Number.isInteger(Number(topK)) || Number(topK) < 1 || Number(topK) > 50) {
+          errors.push(`web vitals breakdown node ${node.id} web_vitals_top_k must be an integer from 1 to 50`);
+        }
+        if (node.output_key !== undefined && (typeof node.output_key !== 'string' || !node.output_key.trim())) {
+          errors.push(`web vitals breakdown node ${node.id} has invalid output_key`);
+        }
+        continue;
       }
       if (node.analysis_mode === 'inventory') {
         const topK = node.inventory_top_k ?? 50;

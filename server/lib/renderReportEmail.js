@@ -87,7 +87,9 @@ function statusColors(value) {
   const status = String(value ?? '').trim().toLowerCase();
   if (status === 'critical') return { color: '#dc2626', background: '#fee2e2' };
   if (status === 'low stock' || status === 'low') return { color: '#ea580c', background: '#ffedd5' };
-  if (status === 'healthy') return { color: '#059669', background: '#d1fae5' };
+  if (status === 'healthy' || status === 'good') return { color: '#059669', background: '#d1fae5' };
+  if (status === 'needs improvement') return { color: '#ea580c', background: '#ffedd5' };
+  if (status === 'poor') return { color: '#dc2626', background: '#fee2e2' };
   return { color: '#64748b', background: '#f1f5f9' };
 }
 
@@ -135,15 +137,16 @@ function buildReportViewModel({ context, template, branding }) {
       rows: source.slice(0, table.limit).map((entry, index) => ({
         rank: index + 1,
         cells: table.columns.map((column) => {
-          const rawValue = requireBinding(entry, column.path);
-          const value = formatValue(rawValue, column.format, { currency });
+          // A path that exists but holds no value (e.g. a page with no CVR) is a dash.
+          const rawValue = requirePresentBinding(entry, column.path);
+          const value = rawValue == null ? '—' : formatValue(rawValue, column.format, { currency });
           // The inventory Status column is always shown as a colored chip, with no setting needed.
           const format = column.format === 'text' && column.path === 'status' && isInventoryStatus(value)
             ? 'status'
             : column.format;
           return {
             value,
-            numericValue: column.format === 'delta_percent' ? Number(rawValue) : null,
+            numericValue: column.format === 'delta_percent' && rawValue != null ? Number(rawValue) : null,
             format,
           };
         })

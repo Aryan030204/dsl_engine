@@ -13,6 +13,9 @@ async function RecursiveDimensionBreakdownNode(def, context) {
   if (def.analysis_mode === 'inventory') {
     return runInventoryBreakdown(def, context);
   }
+  if (def.analysis_mode === 'web_vitals') {
+    return runWebVitalsBreakdown(def, context);
+  }
 
   const selectedMetrics = [...new Set(
     (Array.isArray(def.base_metrics) && def.base_metrics.length
@@ -97,6 +100,83 @@ async function RecursiveDimensionBreakdownNode(def, context) {
     delta: {
       metrics: combinedMetrics,
       breakdowns: combinedBreakdowns
+    },
+    next: def.next
+  };
+}
+
+// The landing page path a vitals page maps to in the sessions table. The stored url repeats the
+// store host ("https://host/host/products/slug"), so the host segments are dropped; no url falls
+// back to the product path of the page name.
+function pagePathFromUrl(url, pageName) {
+  if (url) {
+    const path = String(url).replace(/^[a-z][a-z0-9+.-]*:\/\/[^/]+/i, '').split(/[?#]/)[0]
+      .replace(/^\/[^/]*\.[^/]*(?=\/|$)/, '');
+    return path || '/';
+  }
+  return pageName ? `/products/${pageName}` : '/';
+}
+
+// Lighthouse bands: 90+ good, 50-89 needs improvement, below 50 poor.
+function performanceRating(score) {
+  if (score == null) return 'No data';
+  return score >= 90 ? 'Good' : score >= 50 ? 'Needs improvement' : 'Poor';
+}
+
+async function runWebVitalsBreakdown(def, context) {
+  const topK = Math.max(1, Math.min(50, Math.floor(Number(def.web_vitals_top_k) || 5)));
+  const outputKey = normalizeOutputKey(def.output_key) || 'web_vitals_pages';
+  const tenantId = context?.meta?.tenantId;
+  const window = context?.meta?.window;
+  if (!window?.start || !window?.end) {
+    return { status: 'fail', reason: 'Web vitals breakdown: the run has no reporting window' };
+  }
+
+  const timezone = context?.meta?.timezone;
+  const result = await queryExecutor.execute(queryBuilder.buildWebVitalsQuery({ tenantId, window, timezone }));
+  const rows = Array.isArray(result?.rows) ? result.rows : [];
+  if (rows.length === 0) {
+    return { status: 'fail', reason: `Web vitals breakdown: no web vitals rows for ${String(window.start).slice(0, 10)}` };
+  }
+
+  // Full-day sessions and CVR per page come from the sessions table; a page it doesn't know keeps
+  // its snapshot sessions and has no CVR.
+  const withPath = rows.map((row) => ({ row, path: pagePathFromUrl(row.url, row.page_name) }));
+  const cvrResult = await queryExecutor.execute(queryBuilder.buildPagePathCvrQuery({
+    tenantId, window, timezone, paths: withPath.map((entry) => entry.path)
+  }));
+  const byPath = new Map((cvrResult?.rows || []).map((row) => [row.landing_page_path, row]));
+
+  const pages = withPath.map(({ row, path }) => {
+    const performance = row.performance == null ? null : Math.round(Number(row.performance));
+    const known = byPath.get(path);
+    const cvr = known && known.product_id != null && known.cvr_pct != null ? Number(known.cvr_pct) : null;
+    return {
+      page_name: row.page_name || 'Unknown page',
+      url: row.url || null,
+      path,
+      sessions: Number(known ? known.sessions : row.sessions) || 0,
+      performance,
+      rating: performanceRating(performance),
+      cvr_pct: Number.isFinite(cvr) ? Number(cvr.toFixed(2)) : null,
+      snapshots: Number(row.snapshots || 0)
+    };
+  })
+    .sort((a, b) => b.sessions - a.sessions || a.page_name.localeCompare(b.page_name))
+    .slice(0, topK)
+    .map((page, index) => ({ rank: index + 1, ...page }));
+  const scored = pages.filter((page) => page.performance != null);
+
+  return {
+    status: 'pass',
+    delta: {
+      metrics: {
+        web_vitals_pages_analyzed: pages.length,
+        web_vitals_avg_performance: scored.length
+          ? Math.round(scored.reduce((sum, page) => sum + page.performance, 0) / scored.length)
+          : null
+      },
+      breakdowns: { [outputKey]: pages }
     },
     next: def.next
   };

@@ -54,7 +54,6 @@ export default function SettingsPage() {
         tenantId: tenant.tenantId,
         updates: {
           settings: {
-            ...(tenant.settings || {}),
             timezone: nextTimezone
           }
         }
@@ -74,7 +73,6 @@ export default function SettingsPage() {
         tenantId: tenant.tenantId,
         updates: {
           settings: {
-            ...(tenant.settings || {}),
             currency: nextCurrency
           }
         }
@@ -93,7 +91,6 @@ export default function SettingsPage() {
         tenantId: tenant.tenantId,
         updates: {
           settings: {
-            ...(tenant.settings || {}),
             shopifyDomain: getDraftStore(tenant).trim()
           }
         }
@@ -124,7 +121,6 @@ export default function SettingsPage() {
         tenantId: tenant.tenantId,
         updates: {
           settings: {
-            ...(tenant.settings || {}),
             emailBranding
           }
         }
