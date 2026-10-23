@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { X, Save } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { useUpdateWorkflow, useWorkflow, useCreateWorkflowVersion, useUpdateGlobalWorkflow, useCreateGlobalWorkflowVersion } from '../api/hooks';
+import { useUpdateWorkflow, useWorkflow, useCreateWorkflowVersion, useUpdateGlobalWorkflow, useCreateGlobalWorkflowVersion, useTenants } from '../api/hooks';
+import { useTenant } from '../context/TenantContext';
 import { Button } from './ui';
 
 export default function EditWorkflowModal({ workflow, onClose }) {
@@ -11,7 +12,25 @@ export default function EditWorkflowModal({ workflow, onClose }) {
   const createVersion = useCreateWorkflowVersion(workflow.workflowId);
   const createGlobalVersion = useCreateGlobalWorkflowVersion(workflow.workflowId);
   const isGlobal = workflow.scope === 'global';
-  
+  const { tenantId } = useTenant();
+  const { data: tenants = [], isLoading: tenantsLoading } = useTenants();
+  const currentTenantIds = Array.isArray(workflow.tenantIds) && workflow.tenantIds.length
+    ? workflow.tenantIds
+    : (workflow.tenantId ? [workflow.tenantId] : []);
+  const initialScope = isGlobal ? 'global' : (currentTenantIds.length > 1 ? 'multiple' : 'single');
+  const [scope, setScope] = useState(initialScope); // 'single' | 'multiple' | 'global'
+  const [selectedTenantIds, setSelectedTenantIds] = useState(
+    isGlobal ? (tenantId ? [tenantId] : []) : currentTenantIds
+  );
+  const tenantOptions = useMemo(() => (
+    (Array.isArray(tenants) ? tenants : []).filter((tenant) => tenant?.tenantId).map((tenant) => tenant.tenantId).sort()
+  ), [tenants]);
+  const toggleTenant = (id) => setSelectedTenantIds((prev) => (
+    prev.includes(id) ? prev.filter((value) => value !== id) : [...prev, id]
+  ));
+  const scopeChanged = scope !== initialScope
+    || (scope !== 'global' && [...selectedTenantIds].sort().join(',') !== [...currentTenantIds].sort().join(','));
+
   const [mode, setMode] = useState('metadata'); // 'metadata' or 'definition'
   const [formData, setFormData] = useState({
     name: workflow.name || '',
@@ -30,17 +49,25 @@ export default function EditWorkflowModal({ workflow, onClose }) {
   const handleMetadataSubmit = async (e) => {
     e.preventDefault();
 
+    if (scopeChanged && scope !== 'global' && !selectedTenantIds.length) {
+      toast.error('Select at least one tenant');
+      return;
+    }
+    if (scopeChanged && scope === 'single' && selectedTenantIds.length !== 1) {
+      toast.error('Choose exactly one tenant for a single-tenant workflow');
+      return;
+    }
+
     try {
+      const updates = { name: formData.name, isActive: formData.isActive };
+      if (scopeChanged) {
+        updates.scope = scope;
+        if (scope !== 'global') updates.tenantIds = selectedTenantIds;
+      }
       if (isGlobal) {
-        await updateGlobalWorkflow.mutateAsync({
-          name: formData.name,
-          isActive: formData.isActive,
-        });
+        await updateGlobalWorkflow.mutateAsync(updates);
       } else {
-        await updateWorkflow.mutateAsync({
-          name: formData.name,
-          isActive: formData.isActive,
-        });
+        await updateWorkflow.mutateAsync(updates);
       }
       toast.success('Workflow updated successfully');
       onClose();
@@ -186,6 +213,69 @@ export default function EditWorkflowModal({ workflow, onClose }) {
                       <span className="text-sm">Inactive</span>
                     </label>
                   </div>
+                </div>
+
+                {/* Scope */}
+                <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+                  <div className="text-sm font-medium text-gray-700 mb-3">Workflow Scope</div>
+                  <div className="grid gap-2">
+                    <label className="flex items-center gap-2 text-sm text-gray-700">
+                      <input
+                        type="radio"
+                        name="workflow-scope"
+                        checked={scope === 'single'}
+                        onChange={() => {
+                          setScope('single');
+                          setSelectedTenantIds((prev) => (prev.length === 1 ? prev : (tenantId ? [tenantId] : [])));
+                        }}
+                      />
+                      Current tenant ({selectedTenantIds.length === 1 ? selectedTenantIds[0] : (tenantId || 'None')})
+                    </label>
+                    <label className="flex items-center gap-2 text-sm text-gray-700">
+                      <input
+                        type="radio"
+                        name="workflow-scope"
+                        checked={scope === 'multiple'}
+                        onChange={() => setScope('multiple')}
+                      />
+                      Selected tenants
+                    </label>
+                    <label className="flex items-center gap-2 text-sm text-gray-700">
+                      <input
+                        type="radio"
+                        name="workflow-scope"
+                        checked={scope === 'global'}
+                        onChange={() => setScope('global')}
+                      />
+                      Global (all tenants)
+                    </label>
+                  </div>
+
+                  {scope === 'multiple' && (
+                    <div className="mt-4">
+                      <div className="text-xs text-gray-500 mb-2">Select tenants</div>
+                      <div className="max-h-40 overflow-auto border border-gray-200 rounded-lg bg-white">
+                        {tenantsLoading ? (
+                          <div className="px-3 py-2 text-sm text-gray-500">Loading tenants...</div>
+                        ) : tenantOptions.length === 0 ? (
+                          <div className="px-3 py-2 text-sm text-gray-500">No tenants available</div>
+                        ) : (
+                          tenantOptions.map((id) => (
+                            <label key={id} className="flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50">
+                              <input type="checkbox" checked={selectedTenantIds.includes(id)} onChange={() => toggleTenant(id)} />
+                              {id}
+                            </label>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {scopeChanged && (
+                    <p className="mt-3 text-xs text-amber-700">
+                      Saving will change which tenants this workflow runs for, including all its versions and its trigger brands.
+                    </p>
+                  )}
                 </div>
 
                 {/* Current Version Info */}

@@ -18,6 +18,7 @@ function generateWorkflowId() {
   return `wf_${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`;
 }
 
+const { resolveScopeChange, applyScopeChange } = require('../services/workflowScopeService');
 const router = express.Router({ mergeParams: true });
 
 function normalizeTriggerDefinition(definition, tenantId, scope = 'tenant') {
@@ -225,7 +226,7 @@ router.get('/:workflowId/versions', async (req, res, next) => {
 router.patch('/:workflowId', async (req, res, next) => {
   try {
     const { tenantId, workflowId } = req.params;
-    const { name, isActive } = req.body;
+    const { name, isActive, scope, tenantIds } = req.body;
 
     const workflow = await Workflow.findOne(buildTenantWorkflowQuery(tenantId, workflowId));
     if (!workflow) return res.status(404).json({ error: 'workflow not found' });
@@ -233,7 +234,13 @@ router.patch('/:workflowId', async (req, res, next) => {
     if (name !== undefined) workflow.name = name;
     if (isActive !== undefined) workflow.isActive = isActive;
 
-    await workflow.save();
+    if (scope !== undefined) {
+      const change = await resolveScopeChange({ scope, tenantIds });
+      await workflow.save();
+      await applyScopeChange(workflow, change);
+    } else {
+      await workflow.save();
+    }
     res.json({ workflow: attachWorkflowKind(workflow.toObject()) });
   } catch (err) {
     next(err);
