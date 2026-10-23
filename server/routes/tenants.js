@@ -5,6 +5,7 @@ const WorkflowSchedule = require('../models/WorkflowSchedule');
 const WorkflowRun = require('../models/WorkflowRun');
 const { getNextRunAt } = require('../../scheduler/app/cronUtils');
 const { validateEmailBranding } = require('../lib/emailBranding');
+const { normalizeStoreDomain } = require('../../lib/redisSales');
 
 // Report emails format money with Intl in this currency, so it must be an ISO 4217
 // code Intl accepts (e.g. INR, USD).
@@ -27,7 +28,20 @@ function isSupportedTimeZone(timeZone) {
   }
 }
 
-const { normalizeShopifyDomain } = require('../../lib/shopifyDomain');
+// Optional Shopify store domain: the key the inventory sales ranking is stored under in Redis.
+// Normalises it in place (lower case, no protocol). An empty value clears the setting.
+const SHOPIFY_DOMAIN_ERROR = 'shopifyDomain must be a Shopify store domain such as my-store.myshopify.com';
+function resolveShopifyDomain(settings) {
+  if (settings.shopifyDomain === undefined) return {};
+  if (settings.shopifyDomain === null || String(settings.shopifyDomain).trim() === '') {
+    delete settings.shopifyDomain;
+    return { cleared: true };
+  }
+  const normalized = normalizeStoreDomain(settings.shopifyDomain);
+  if (!normalized) return { error: SHOPIFY_DOMAIN_ERROR };
+  settings.shopifyDomain = normalized;
+  return {};
+}
 
 const router = express.Router();
 
@@ -98,22 +112,17 @@ router.post('/', requireAdmin, async (req, res, next) => {
       return res.status(409).json({ error: 'Tenant already exists' });
     }
 
-    const resolvedSettings = settings || {};
+    const resolvedSettings = { ...(settings || {}) };
     if (resolvedSettings.timezone && !isSupportedTimeZone(resolvedSettings.timezone)) {
       return res.status(400).json({ error: 'timezone must be a supported IANA timezone' });
     }
     if (resolvedSettings.currency !== undefined && !isSupportedCurrency(resolvedSettings.currency)) {
       return res.status(400).json({ error: 'currency must be a 3-letter ISO currency code, e.g. INR' });
     }
-    if (resolvedSettings.shopifyDomain !== undefined) {
-      const domain = normalizeShopifyDomain(resolvedSettings.shopifyDomain);
-      if (!domain.ok) {
-        return res.status(400).json({ error: 'shopifyDomain must look like your-store.myshopify.com' });
-      }
-      resolvedSettings.shopifyDomain = domain.value;
-    }
     const brandingErrors = validateEmailBranding(resolvedSettings.emailBranding, 'settings.emailBranding');
     if (brandingErrors.length) return res.status(400).json({ errors: brandingErrors });
+    const storeCheck = resolveShopifyDomain(resolvedSettings);
+    if (storeCheck.error) return res.status(400).json({ error: storeCheck.error });
 
     const tenant = await Tenant.create({
       tenantId: tenantId.toUpperCase(),
@@ -149,38 +158,39 @@ router.patch('/:tenantId', async (req, res, next) => {
       if (settings.currency !== undefined && !isSupportedCurrency(settings.currency)) {
         return res.status(400).json({ error: 'currency must be a 3-letter ISO currency code, e.g. INR' });
       }
-      if (settings.shopifyDomain !== undefined) {
-        const domain = normalizeShopifyDomain(settings.shopifyDomain);
-        if (!domain.ok) {
-          return res.status(400).json({ error: 'shopifyDomain must look like your-store.myshopify.com' });
-        }
-        settings.shopifyDomain = domain.value;
-      }
       const brandingErrors = validateEmailBranding(settings.emailBranding, 'settings.emailBranding');
       if (brandingErrors.length) return res.status(400).json({ errors: brandingErrors });
+      const incomingSettings = { ...settings };
+      const storeCheck = resolveShopifyDomain(incomingSettings);
+      if (storeCheck.error) return res.status(400).json({ error: storeCheck.error });
       const currentSettings = tenant.settings?.toObject
         ? tenant.settings.toObject()
         : (tenant.settings || {});
+      if (storeCheck.cleared) delete currentSettings.shopifyDomain;
       tenant.settings = {
         ...currentSettings,
-        ...settings,
-        ...(settings.emailBranding !== undefined ? {
+        ...incomingSettings,
+        ...(incomingSettings.emailBranding !== undefined ? {
           // Treat this as a complete branding form. Merging prevents users
           // from removing a previously configured logo, tagline, or color.
-          emailBranding: settings.emailBranding || {}
+          emailBranding: incomingSettings.emailBranding || {}
         } : {})
       };
     }
 
     await tenant.save();
 
+    // Keep the tenant's schedules on the tenant's timezone. Only schedules that are on a different
+    // timezone are touched, so saving any other setting (the Settings page sends the whole settings
+    // object every time) leaves them alone. They are updated field by field instead of re-saved
+    // whole, so an unrelated old value on a schedule (e.g. a retired overlapPolicy) cannot make a
+    // tenant save fail.
     if (settings?.timezone) {
-      const schedules = await WorkflowSchedule.find({ tenantId });
-      await Promise.all(schedules.map(async (schedule) => {
-        schedule.timezone = settings.timezone;
-        schedule.nextRunAt = getNextRunAt(schedule.cronExpr, new Date(), settings.timezone);
-        await schedule.save();
-      }));
+      const schedules = await WorkflowSchedule.find({ tenantId, timezone: { $ne: settings.timezone } });
+      await Promise.all(schedules.map((schedule) => WorkflowSchedule.updateOne(
+        { _id: schedule._id },
+        { $set: { timezone: settings.timezone, nextRunAt: getNextRunAt(schedule.cronExpr, new Date(), settings.timezone) } }
+      )));
     }
 
     res.json({ tenant });

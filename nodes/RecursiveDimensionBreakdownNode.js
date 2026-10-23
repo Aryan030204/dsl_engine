@@ -1,7 +1,7 @@
 const queryBuilder = require('../sql/QueryBuilder');
 const queryExecutor = require('../sql/QueryExecutor');
 const { summarizeSkus } = require('../lib/inventorySkus');
-const topProductsCache = require('../server/services/topProductsCache');
+const redisSales = require('../lib/redisSales');
 const {
   buildDefaultBreakdownOutputKey,
   detectOutputKeyMode,
@@ -102,53 +102,6 @@ async function RecursiveDimensionBreakdownNode(def, context) {
   };
 }
 
-// Which products the inventory report covers. Preferred: the top products already cached in Redis
-// for the tenant's Shopify store (ranked by 7-day sales revenue); stock, DRR and DOH for those
-// products are then read from the DB. If the tenant has no Shopify domain, or the cache is
-// unusable (no REDIS_URI, unreachable, missing, stale, malformed, or none of its products have
-// inventory rows), the original DB ranking query is used instead, so the report still goes out.
-async function loadInventoryRows({ context, topK }) {
-  const tenantId = context?.meta?.tenantId;
-  const shopDomain = context?.meta?.shopifyDomain;
-  let fallbackReason = null;
-
-  if (shopDomain) {
-    try {
-      const cached = await topProductsCache.getTopProducts({ shopDomain, topK });
-      const result = await queryExecutor.execute(queryBuilder.buildInventoryProductsByIdsQuery({
-        tenantId,
-        productIds: cached.products.map((product) => product.product_id)
-      }));
-      const byId = new Map((result?.rows || []).map((row) => [String(row.product_id), row]));
-      const rows = [];
-      for (const entry of cached.products) {
-        const row = byId.get(entry.product_id);
-        if (row) rows.push({ ...row, rank: entry.rank, sales_7d: entry.sales });
-      }
-      if (rows.length) {
-        return {
-          rows,
-          source: 'redis',
-          fallbackReason: null,
-          notInInventoryCount: cached.products.length - rows.length,
-          cacheUpdatedAt: cached.updatedAt
-        };
-      }
-      fallbackReason = 'no_inventory_rows';
-    } catch (error) {
-      if (!(error instanceof topProductsCache.TopProductsCacheError)) throw error;
-      fallbackReason = error.reason;
-    }
-    console.warn(`[inventory] top products from DB fallback: ${fallbackReason} tenant=${tenantId}`);
-  } else {
-    fallbackReason = 'no_shop_domain';
-  }
-
-  const result = await queryExecutor.execute(queryBuilder.buildInventoryProductQuery({ tenantId, topK }));
-  const rows = (result?.rows || []).map((row, index) => ({ ...row, rank: index + 1, sales_7d: null }));
-  return { rows, source: 'db', fallbackReason, notInInventoryCount: 0, cacheUpdatedAt: null };
-}
-
 async function runInventoryBreakdown(def, context) {
   const topK = Math.max(1, Math.min(100, Math.floor(Number(def.inventory_top_k) || 50)));
   const reportTopK = Math.max(1, Math.min(100, Math.floor(Number(def.inventory_report_top_k) || 2)));
@@ -159,13 +112,24 @@ async function runInventoryBreakdown(def, context) {
     return { status: 'fail', reason: 'Inventory breakdown: healthy DOH threshold must be greater than critical threshold' };
   }
 
-  const loaded = await loadInventoryRows({ context, topK });
-  const result = { rows: loaded.rows };
-  if (!Array.isArray(result.rows) || result.rows.length === 0) {
-    return { status: 'fail', reason: 'Inventory breakdown: no inventory rows were found for this brand' };
+  const tenantId = context?.meta?.tenantId;
+  const wantsSalesRanking = def.inventory_ranking === 'sales';
+
+  // Sales ranking: the top products by sales over the last 7 days come from Redis (gift-free);
+  // their stock / DRR / DOH still come from the inventory table. If the ranking can't be used,
+  // fall back to ranking by units sold so the report still goes out, and say why.
+  let salesRanking = null;
+  let fallbackReason = null;
+  if (wantsSalesRanking) {
+    try {
+      salesRanking = await redisSales.getTopProductSales(context?.meta?.shopifyDomain);
+    } catch (error) {
+      if (!(error instanceof redisSales.RedisSalesUnavailableError)) throw error;
+      fallbackReason = error.reason;
+    }
   }
 
-  const products = result.rows.map((row) => {
+  const mapRow = (row) => {
     const doh = row.doh_7d == null ? null : Number(row.doh_7d);
     return {
       product_id: String(row.product_id),
@@ -175,14 +139,52 @@ async function runInventoryBreakdown(def, context) {
       sold_units_7d: Number(row.sold_units_7d || 0),
       drr_7d: Number(row.drr_7d || 0),
       doh_7d: doh,
-      rank: row.rank,
-      sales_7d: row.sales_7d == null ? null : Number(row.sales_7d),
       status: doh == null ? 'No recent sales'
         : doh <= criticalThreshold ? 'Critical'
           : doh < healthyThreshold ? 'Low stock' : 'Healthy',
       updated_at: row.updated_at
     };
-  });
+  };
+
+  let products = [];
+  let missingFromInventory = 0;
+  if (salesRanking) {
+    const ranked = salesRanking.products.slice(0, topK);
+    const result = await queryExecutor.execute(queryBuilder.buildInventoryProductQuery({
+      tenantId,
+      topK,
+      productIds: ranked.map((product) => product.product_id)
+    }));
+    const rowsById = new Map((result?.rows || []).map((row) => [String(row.product_id), row]));
+    ranked.forEach((rankedProduct) => {
+      const row = rowsById.get(rankedProduct.product_id);
+      if (!row) {
+        missingFromInventory += 1;
+        return;
+      }
+      products.push({
+        ...mapRow(row),
+        gross_sales: rankedProduct.sales,
+        sales_rank: products.length + 1
+      });
+    });
+    if (!products.length) {
+      salesRanking = null;
+      fallbackReason = 'none of the products ranked by sales are in the inventory table';
+    }
+  }
+
+  if (!salesRanking) {
+    if (fallbackReason) {
+      console.warn(`[inventory] sales ranking unavailable for ${tenantId}: ${fallbackReason}; ranking by units sold instead`);
+    }
+    const result = await queryExecutor.execute(queryBuilder.buildInventoryProductQuery({ tenantId, topK }));
+    if (!Array.isArray(result?.rows) || result.rows.length === 0) {
+      return { status: 'fail', reason: 'Inventory breakdown: no inventory rows were found for this brand' };
+    }
+    products = result.rows.map(mapRow);
+    missingFromInventory = 0;
+  }
   const critical = products.filter((product) => product.doh_7d != null && product.doh_7d <= criticalThreshold);
   const medium = products.filter((product) => product.doh_7d != null && product.doh_7d > criticalThreshold && product.doh_7d < healthyThreshold);
   const healthy = products.filter((product) => product.doh_7d != null && product.doh_7d >= healthyThreshold);
@@ -206,10 +208,14 @@ async function runInventoryBreakdown(def, context) {
     healthy_threshold_days: healthyThreshold,
     report_top_k: reportTopK,
     as_of: asOf?.toISOString() || null,
-    top_products_source: loaded.source,
-    top_products_fallback_reason: loaded.fallbackReason,
-    top_products_cache_updated_at: loaded.cacheUpdatedAt,
-    not_in_inventory_count: loaded.notInInventoryCount
+    ranking_source: salesRanking ? 'sales' : 'units',
+    ...(salesRanking ? {
+      sales_window_start: salesRanking.windowStart,
+      sales_window_end: salesRanking.windowEnd,
+      sales_updated_at: salesRanking.updatedAt,
+      missing_from_inventory: missingFromInventory
+    } : {}),
+    ...(fallbackReason ? { ranking_fallback_reason: fallbackReason } : {})
   };
 
   return {
@@ -220,10 +226,7 @@ async function runInventoryBreakdown(def, context) {
         inventory_critical_products: report.critical_count,
         inventory_medium_products: report.medium_count,
         inventory_healthy_products: report.healthy_count,
-        inventory_no_velocity_products: report.no_velocity_count,
-        // 1 when the top products came from the Redis cache, 0 when the DB ranking was used
-        inventory_top_products_from_cache: loaded.source === 'redis' ? 1 : 0,
-        inventory_not_in_inventory_products: loaded.notInInventoryCount
+        inventory_no_velocity_products: report.no_velocity_count
       },
       breakdowns: {
         [outputKey]: products,

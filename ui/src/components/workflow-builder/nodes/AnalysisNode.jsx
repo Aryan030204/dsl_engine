@@ -37,7 +37,7 @@ export const AnalysisNode = ({ data, isConnectable }) => {
             {/* Dimension Breakdown View */}
             {!isComparison && data.analysis_mode === 'inventory' && (
                 <div className="space-y-1 text-[10px]">
-                    <div>Top {data.inventory_top_k || 50} products by 7-day sales</div>
+                    <div>Top {data.inventory_top_k || 50} products by 7-day {data.inventory_ranking === 'sales' ? 'sales' : 'units sold'}</div>
                     <div>Report shows {data.inventory_report_top_k || 2} lowest-DOH products</div>
                     <div>Critical ≤ {data.critical_doh_days ?? 7} DOH · Healthy ≥ {data.healthy_doh_days ?? 15} DOH</div>
                 </div>

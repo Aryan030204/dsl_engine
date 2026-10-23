@@ -16,6 +16,7 @@ export default function CreateTenantModal({ onClose }) {
     description: '',
     currency: 'USD',
     timezone: 'UTC',
+    shopifyDomain: '',
   });
 
   const handleSubmit = async (e) => {
@@ -39,6 +40,7 @@ export default function CreateTenantModal({ onClose }) {
         settings: {
           currency: formData.currency,
           timezone: formData.timezone,
+          ...(formData.shopifyDomain.trim() ? { shopifyDomain: formData.shopifyDomain.trim() } : {}),
         },
       });
       toast.success(`Tenant '${tenant.tenantId}' created successfully`);
@@ -158,6 +160,25 @@ export default function CreateTenantModal({ onClose }) {
                 <option value="Asia/Tokyo">Asia/Tokyo</option>
                 <option value="Asia/Kolkata">Asia/Kolkata</option>
               </select>
+            </div>
+
+            {/* Shopify store */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Shopify store
+              </label>
+              <input
+                type="text"
+                value={formData.shopifyDomain}
+                onChange={(e) =>
+                  setFormData({ ...formData, shopifyDomain: e.target.value })
+                }
+                placeholder="my-store.myshopify.com"
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                Optional. Used to rank the inventory report by sales.
+              </p>
             </div>
           </div>
 

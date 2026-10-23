@@ -8,15 +8,17 @@ import NodeSidebar from './NodeSidebar';
 import WorkflowCanvas from './WorkflowCanvas';
 import PropertiesPanel from './PropertiesPanel';
 import AlertStatePanel from './AlertStatePanel';
-import { jsonToGraph, graphToJson } from '../../utils/workflowTransformers';
+import { jsonToGraph, graphToJson, removeSupersededEdges } from '../../utils/workflowTransformers';
 import {
   buildDefaultBreakdownOutputKey,
 } from '../../constants/workflowOutputKeys';
 import {
+  getInventorySectionErrors,
   getPartialDayProductCompatibilityErrors,
 } from '../../utils/workflowValidation';
 import { getStateConfigErrors, withStateConfigDefaults } from '../../utils/stateConfig';
 import { canSaveWorkflow, shouldResetFromServer } from '../../utils/unsavedChanges';
+import { getInventoryOutputKeys } from '../../utils/reportTemplates';
 
 const sanitizeIdSegment = (value) =>
   String(value || '')
@@ -65,6 +67,7 @@ function WorkflowBuilderContent({
     () => new Map((workflowImportOptions || []).map((item) => [item.workflowId, item])),
     [workflowImportOptions]
   );
+  const inventoryOutputKeys = useMemo(() => getInventoryOutputKeys(nodes), [nodes]);
   const breakdownOutputKeySuggestions = useMemo(() => {
     const keys = new Set();
 
@@ -196,7 +199,8 @@ function WorkflowBuilderContent({
         // (If we had specific handles for steps, we would check here. 
         // For now, if source is composite and target is not 'final', we might assume...)
         
-        setEdges((eds) => addEdge(newEdge, eds));
+        // Replace the handle's previous connection (see removeSupersededEdges)
+        setEdges((eds) => addEdge(newEdge, removeSupersededEdges(eds, newEdge)));
         setHasUnsavedChanges(true);
     },
     [setEdges, nodes],
@@ -460,6 +464,11 @@ function WorkflowBuilderContent({
         toast.error(compatibilityErrors[0]);
         return;
       }
+      const inventorySectionErrors = getInventorySectionErrors(workflowJson);
+      if (inventorySectionErrors.length) {
+        toast.error(inventorySectionErrors[0]);
+        return;
+      }
       const stateConfigErrors = getStateConfigErrors(workflowJson);
       if (stateConfigErrors.length) {
         toast.error(stateConfigErrors[0]);
@@ -660,6 +669,7 @@ function WorkflowBuilderContent({
             onAttachWorkflowToRule={handleAttachWorkflowToBranchRule}
             isAttachingWorkflow={isAttachingWorkflowRef}
             breakdownOutputKeySuggestions={breakdownOutputKeySuggestions}
+            inventoryOutputKeys={inventoryOutputKeys}
           />
         )}
       </div>

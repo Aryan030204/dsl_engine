@@ -172,3 +172,67 @@ export function validateRunDateRanges({ windowStart, windowEnd, baselineStart, b
 
   return errors;
 }
+
+// Inventory numbers only exist once an inventory-mode breakdown node has run, so a report that
+// shows them (the inventory section, a metrics.inventory_* card, or the lowest-DOH table) must
+// come after that node in the workflow. Mirrors the server-side check.
+const DEFAULT_INVENTORY_OUTPUT_KEY = 'inventory_top_products';
+
+function successorIds(node) {
+  const ids = [];
+  if (node?.next) ids.push(node.next);
+  (Array.isArray(node?.rules) ? node.rules : []).forEach((rule) => { if (rule?.then) ids.push(rule.then); });
+  if (node?.default?.then) ids.push(node.default.then);
+  if (Array.isArray(node?.steps)) ids.push(...node.steps);
+  return ids;
+}
+
+function reportReadsInventoryData(node, inventoryOutputKeys) {
+  const template = node.template || {};
+  if (template.includeInventory === true) return true;
+  if (template.inventory?.enabled === true) return true;
+  const paths = (Array.isArray(template.metrics) ? template.metrics : [])
+    .flatMap((metric) => [metric?.value, metric?.change])
+    .filter((path) => typeof path === 'string');
+  if (paths.some((path) => path.startsWith('metrics.inventory_'))) return true;
+  const sources = new Set();
+  [...inventoryOutputKeys, DEFAULT_INVENTORY_OUTPUT_KEY].forEach((key) => {
+    sources.add(`breakdowns.${key}`);
+    sources.add(`breakdowns.${key}_lowest_doh`);
+  });
+  return (Array.isArray(template.tables) ? template.tables : []).some((table) => sources.has(table?.source));
+}
+
+export function getInventorySectionErrors(workflowJson) {
+  const nodes = Array.isArray(workflowJson?.nodes) ? workflowJson.nodes.filter(Boolean) : [];
+  const inventoryNodes = nodes.filter((node) => node.analysis_mode === 'inventory');
+  const inventoryOutputKeys = inventoryNodes.map((node) => (
+    typeof node.output_key === 'string' && node.output_key.trim() ? node.output_key.trim() : DEFAULT_INVENTORY_OUTPUT_KEY
+  ));
+  const byId = new Map(nodes.map((node) => [node.id, node]));
+
+  const reachable = new Set();
+  const queue = [];
+  inventoryNodes.forEach((node) => {
+    queue.push(node.id);
+    nodes.filter((other) => Array.isArray(other.steps) && other.steps.includes(node.id)).forEach((other) => queue.push(other.id));
+  });
+  while (queue.length) {
+    const id = queue.shift();
+    if (reachable.has(id)) continue;
+    reachable.add(id);
+    successorIds(byId.get(id)).forEach((nextId) => { if (byId.has(nextId)) queue.push(nextId); });
+  }
+
+  const errors = [];
+  nodes.forEach((node) => {
+    if ((node.type !== 'email' && node.type !== 'messaging') || node.format !== 'report') return;
+    if (!reportReadsInventoryData(node, inventoryOutputKeys)) return;
+    if (!inventoryNodes.length) {
+      errors.push(`"${node.id}" shows inventory data, but the workflow has no Dimension Breakdown node in "Inventory coverage" mode.`);
+    } else if (!reachable.has(node.id)) {
+      errors.push(`"${node.id}" shows inventory data but runs before the inventory breakdown node. Connect it after that node.`);
+    }
+  });
+  return errors;
+}

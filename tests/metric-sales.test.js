@@ -213,15 +213,16 @@ test('a card whose metric exists but is empty shows a dash; an unknown path stil
   assert.throws(() => renderEmail({ format: 'report', context: reportContext(), template: broken, subject: 'R' }), /missing required binding: metrics\.not_a_metric/);
 });
 
-test('validation allows up to six KPI cards and the currency format', () => {
+test('validation accepts any number of KPI cards (at least one) and the currency format', () => {
   const definition = (metrics) => ({
     workflow_type: 'root_cause_analysis', version: '1',
     trigger: { type: 'alert', alertType: 'daily', brandScope: 'single', brandIds: ['TMC'] },
     nodes: [{ id: 'mail', type: 'email', format: 'report', to: ['ops@example.com'], subject: 'R', template: reportTemplate(metrics) }]
   });
   assert.equal(validateWorkflowDefinition(definition(sixCards)).ok, true);
-  const seven = [...sixCards, sixCards[0]];
-  assert.ok(validateWorkflowDefinition(definition(seven)).errors.some((e) => /one to 6 items/.test(e)));
+  const many = Array.from({ length: 30 }, (_, i) => sixCards[i % sixCards.length]);
+  assert.equal(validateWorkflowDefinition(definition(many)).ok, true);
+  assert.ok(validateWorkflowDefinition(definition([])).errors.some((e) => /at least one item/.test(e)));
 });
 
 test('four or fewer KPI cards share one desktop row', () => {
