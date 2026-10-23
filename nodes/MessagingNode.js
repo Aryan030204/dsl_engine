@@ -90,7 +90,7 @@ async function MessagingNode(def, context, runtime = {}) {
   // 'deferred': a state-engine workflow captured this send (server/lib/
   // notificationCapture.js); whether it goes out is decided after the run.
   const failedChannels = Object.entries(deliveries)
-    .filter(([, delivery]) => !delivery || (delivery.status !== 'sent' && delivery.status !== 'deferred'))
+    .filter(([, delivery]) => !delivery || (delivery.status !== 'sent' && delivery.status !== 'deferred' && delivery.status !== 'skipped'))
     .map(([channel, delivery]) => `${channel}: ${delivery?.error || 'delivery failed'}`);
   const scratch = context.scratch || {};
   const result = {

@@ -32,7 +32,11 @@ export default function WorkflowRunsPage() {
         rerun: true,
         mode: 'async',
       });
-      toast.success(`Workflow rerun started: ${result.runId}`);
+      if (!result.runId) {
+        toast.error('Not started: this workflow already has a run in progress and one waiting.');
+      } else {
+        toast.success('Rerun queued. It starts when the scheduler worker picks it up.');
+      }
       // Explicitly refetch to update the list immediately
       refetch();
     } catch (err) {

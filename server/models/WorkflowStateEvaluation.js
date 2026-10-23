@@ -36,6 +36,10 @@ const WorkflowStateEvaluationSchema = new mongoose.Schema(
       error: { type: String, default: null },
       sent_at: { type: Date, default: null },
       rolled_back: { type: Boolean, default: false },
+      // Why a notification the engine approved was not sent (e.g. the run's path had no notifier).
+      skipped_reason: { type: String, default: null },
+      // Recipients who were on the workflow but had paused / muted these emails: [{ email, reason }]
+      suppressed_recipients: { type: mongoose.Schema.Types.Mixed, default: undefined },
       // Only present when the run captured Telegram messages.
       telegram: { type: mongoose.Schema.Types.Mixed, default: undefined }
     },

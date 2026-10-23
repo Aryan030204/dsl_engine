@@ -3,6 +3,7 @@ const WorkflowRun = require('../../server/models/WorkflowRun');
 const { ACTIVE_STATUSES, PENDING_STATUSES, evaluateOverlap } = require('../domain/overlapPolicy');
 const { getRabbitWorkflowRunQueue } = require('../infra/runQueue/RabbitWorkflowRunQueue');
 const { getRetryDelayMs } = require('../domain/retryPolicy');
+const { getRunTimeoutMs, runTimeoutMessage } = require('../../lib/runTimeout');
 
 function useRabbitRunQueue() {
   return process.env.SCHEDULER_RUN_QUEUE_BACKEND === 'rabbit';
@@ -13,6 +14,8 @@ function useRabbitRunQueue() {
 // Recovering a live run re-executes it from node one, which re-sends its email.
 const RUN_LEASE_MS = Math.max(Number(process.env.SCHEDULER_RUN_LEASE_MS) || 120000, 1000);
 const LEASE_HEARTBEAT_MS = Math.max(Number(process.env.SCHEDULER_LEASE_HEARTBEAT_MS) || 15000, 1000);
+
+const REPLACED_RUN_MESSAGE = 'Canceled: replaced by a newer scheduled run';
 
 function getExecutionKey({ tenantId, workflowId }) {
   return `${tenantId}:${workflowId}`;
@@ -28,19 +31,21 @@ async function enqueueRun(params) {
     triggerType = 'manual',
     triggerRef = null,
     overlapPolicy = 'queue_one_pending',
-    maxAttempts = 3
+    maxAttempts = 3,
+    notifyLive = false,
+    model = WorkflowRun // replaceable in tests
   } = params;
 
   const executionKey = getExecutionKey({ tenantId, workflowId });
 
   const [activeRun, pendingRun] = await Promise.all([
-    WorkflowRun.findOne({
+    model.findOne({
       tenantId,
       workflowId,
       executionKey,
       status: { $in: Array.from(ACTIVE_STATUSES) }
     }).sort({ createdAt: 1 }),
-    WorkflowRun.findOne({
+    model.findOne({
       tenantId,
       workflowId,
       executionKey,
@@ -57,15 +62,42 @@ async function enqueueRun(params) {
     };
   }
 
+  // replace_running: cancel everything still running or waiting for this workflow. A running run
+  // notices the status change between nodes (and within a few seconds) and stops without sending
+  // anything further; the new run below starts straight away.
+  let replacedCount = 0;
+  if (overlapDecision.action === 'replace') {
+    const replaced = await model.updateMany(
+      {
+        tenantId,
+        workflowId,
+        executionKey,
+        status: { $in: Array.from(new Set([...ACTIVE_STATUSES, ...PENDING_STATUSES])) }
+      },
+      {
+        $set: {
+          status: 'canceled',
+          finishedAt: new Date(),
+          leaseOwner: null,
+          leaseExpiresAt: null,
+          lastError: REPLACED_RUN_MESSAGE
+        }
+      }
+    );
+    replacedCount = replaced?.modifiedCount ?? replaced?.nModified ?? 0;
+    console.warn(`[run-queue] replaced ${replacedCount} run(s) for workflow=${workflowId} tenant=${tenantId}: a newer ${triggerType} run took over`);
+  }
+
   const status = overlapDecision.action === 'defer' ? 'deferred' : 'queued';
   const now = new Date();
-  const run = await WorkflowRun.create({
+  const run = await model.create({
     tenantId,
     workflowId,
     version,
     status,
     triggerType,
     triggerRef,
+    notifyLive: notifyLive === true,
     executionKey,
     context,
     definitionJson,
@@ -94,6 +126,7 @@ async function enqueueRun(params) {
   return {
     enqueued: true,
     reason: null,
+    replacedCount,
     run
   };
 }
@@ -269,6 +302,51 @@ async function promoteDeferredRun(tenantId, workflowId, executionKey) {
   return promoted;
 }
 
+// Fails every `running` run that has been going longer than the run time limit. This is what clears
+// runs whose process died mid-run (a manual run killed by a server restart has no lease, so lease
+// recovery never sees it) and, as a backstop, runs whose executor hung. A stuck run would otherwise
+// block its workflow's schedule forever under the queue_one_pending policy. After failing a run, the
+// next deferred run for the same workflow is promoted.
+async function failTimedOutRuns({
+  timeoutMs = getRunTimeoutMs(),
+  now = new Date(),
+  limit = 100,
+  model = WorkflowRun,
+  promote = promoteDeferredRun
+} = {}) {
+  if (!(timeoutMs > 0)) return { count: 0, failed: [] };
+
+  const cutoff = new Date(now.getTime() - timeoutMs);
+  const failed = [];
+
+  for (let i = 0; i < limit; i += 1) {
+    const run = await model.findOneAndUpdate(
+      { status: 'running', startedAt: { $lt: cutoff } },
+      {
+        $set: {
+          status: 'failed',
+          finishedAt: now,
+          lastError: runTimeoutMessage(timeoutMs),
+          leaseOwner: null,
+          leaseExpiresAt: null
+        }
+      },
+      { sort: { startedAt: 1 }, new: true }
+    );
+    if (!run) break;
+
+    console.warn(`[run-queue] timed out run=${run._id} workflow=${run.workflowId} tenant=${run.tenantId} startedAt=${new Date(run.startedAt).toISOString()} -> failed`);
+    failed.push({ runId: run._id, workflowId: run.workflowId, tenantId: run.tenantId });
+    try {
+      await promote(run.tenantId, run.workflowId, run.executionKey);
+    } catch (error) {
+      console.warn(`[run-queue] could not promote deferred run after timeout workflow=${run.workflowId}: ${error.message}`);
+    }
+  }
+
+  return { count: failed.length, failed };
+}
+
 async function publishRunDispatch(runId, headers = {}) {
   if (!useRabbitRunQueue()) return;
   await getRabbitWorkflowRunQueue().publishRun(runId, headers);
@@ -407,5 +485,6 @@ module.exports = {
   publishRunDispatch,
   republishDueRetryRuns,
   bootstrapDispatchRunnableRuns,
-  recoverExpiredRunningRuns
+  recoverExpiredRunningRuns,
+  failTimedOutRuns
 };

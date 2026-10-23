@@ -6,6 +6,12 @@ function evaluateOverlap({ activeRun, pendingRun, overlapPolicy = 'queue_one_pen
     return { action: 'queue' };
   }
 
+  // The newest scheduled run wins: whatever is running or waiting is cancelled and the new run
+  // starts straight away (see enqueueRun).
+  if (overlapPolicy === 'replace_running') {
+    return activeRun || pendingRun ? { action: 'replace' } : { action: 'queue' };
+  }
+
   if (!activeRun) {
     return { action: 'queue' };
   }

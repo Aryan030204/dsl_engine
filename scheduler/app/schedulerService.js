@@ -343,15 +343,31 @@ async function createSchedule({ tenantId, workflowId, payload }) {
     timezone: payload.timezone || 'UTC',
     windowMode: payload.windowMode || SCHEDULE_WINDOW_MODES.PREVIOUS_COMPLETE_DAY,
     isActive: payload.isActive !== false,
-    overlapPolicy: payload.overlapPolicy || 'queue_one_pending',
+    overlapPolicy: payload.overlapPolicy || 'replace_running',
     retryPolicy: payload.retryPolicy || { maxAttempts: 3, backoffSeconds: [30, 120, 600] },
     nextRunAt,
     lastEvaluatedAt: now
   });
 }
 
-async function evaluateDueSchedules(now = new Date()) {
-  const schedules = await WorkflowSchedule.find({
+// A schedule whose due time is older than this when it is finally evaluated (the worker was down) is
+// NOT run: it would analyse a window from the past and could send hours- or days-old alerts. The
+// skipped slots are recorded as missed triggers instead, ready for "Replay missed runs".
+const DEFAULT_STALE_GRACE_MS = 5 * 60 * 1000;
+
+function getStaleGraceMs(env = process.env) {
+  const value = Number(env.SCHEDULER_STALE_GRACE_MS);
+  return Number.isFinite(value) && value >= 0 ? value : DEFAULT_STALE_GRACE_MS;
+}
+
+// `deps` lets tests replace the database and queue; production always uses the defaults.
+async function evaluateDueSchedules(now = new Date(), { staleGraceMs = getStaleGraceMs(), deps = {} } = {}) {
+  const scheduleModel = deps.scheduleModel || WorkflowSchedule;
+  const resolveVersion = deps.resolveVersion || resolveWorkflowVersion;
+  const enqueue = deps.enqueue || enqueueRun;
+  const recordMissed = deps.recordMissed || recordMissedTriggers;
+
+  const schedules = await scheduleModel.find({
     triggerType: 'cron',
     isActive: true,
     nextRunAt: { $lte: now }
@@ -360,41 +376,81 @@ async function evaluateDueSchedules(now = new Date()) {
   const results = [];
 
   for (const schedule of schedules) {
+    const dueAt = new Date(schedule.nextRunAt);
     try {
-      const { workflowVersion, versionId } = await resolveWorkflowVersion({
-        tenantId: schedule.tenantId,
-        workflowId: schedule.workflowId,
-        version: null
-      });
-
-      const scheduledRunTime = schedule.nextRunAt || now;
-      const context = buildCronContext(schedule, scheduledRunTime, {
-        metric: 'cvr'
-      });
-
-      const queued = await enqueueRun({
-        tenantId: schedule.tenantId,
-        workflowId: schedule.workflowId,
-        version: versionId,
-        context,
-        definitionJson: workflowVersion.definitionJson,
-        triggerType: 'cron',
-        triggerRef: schedule._id,
-        overlapPolicy: schedule.overlapPolicy,
-        maxAttempts: schedule.retryPolicy?.maxAttempts || 3
-      });
-
+      // Computed first: an invalid cron fails here, before anything is queued.
       const nextRunAt = getNextRunAt(schedule.cronExpr, now, schedule.timezone || 'UTC');
-      await WorkflowSchedule.updateOne(
-        { _id: schedule._id },
-        {
-          $set: {
-            nextRunAt,
-            lastEvaluatedAt: now,
-            lastTriggeredAt: queued.enqueued ? now : schedule.lastTriggeredAt || null
-          }
-        }
+
+      // Claim the due slot atomically by advancing nextRunAt. A second worker (or a slow tick that
+      // overlaps this one) finds nextRunAt already moved and skips, so a slot can't be queued twice.
+      const claimed = await scheduleModel.findOneAndUpdate(
+        { _id: schedule._id, isActive: true, nextRunAt: schedule.nextRunAt },
+        { $set: { nextRunAt, lastEvaluatedAt: now } },
+        { new: false }
       );
+      if (!claimed) {
+        results.push({ scheduleId: schedule._id, workflowId: schedule.workflowId, enqueued: false, reason: 'claimed_elsewhere' });
+        continue;
+      }
+
+      if (now.getTime() - dueAt.getTime() > staleGraceMs) {
+        const missed = await recordMissed(schedule._id, new Date(dueAt.getTime() - 1), now);
+        console.warn(`[scheduler] skipped stale schedule=${schedule._id} workflow=${schedule.workflowId} tenant=${schedule.tenantId} dueAt=${dueAt.toISOString()} missed=${missed.length}`);
+        results.push({
+          scheduleId: schedule._id,
+          workflowId: schedule.workflowId,
+          enqueued: false,
+          reason: 'stale_skipped',
+          missedCount: missed.length
+        });
+        continue;
+      }
+
+      let queued;
+      try {
+        const { workflowVersion, versionId } = await resolveVersion({
+          tenantId: schedule.tenantId,
+          workflowId: schedule.workflowId,
+          version: null
+        });
+
+        // Windows are built from the slot that was due, not from "now".
+        const context = buildCronContext(schedule, dueAt, {
+          metric: 'cvr'
+        });
+
+        queued = await enqueue({
+          tenantId: schedule.tenantId,
+          workflowId: schedule.workflowId,
+          version: versionId,
+          context,
+          definitionJson: workflowVersion.definitionJson,
+          triggerType: 'cron',
+          triggerRef: schedule._id,
+          overlapPolicy: schedule.overlapPolicy,
+          maxAttempts: schedule.retryPolicy?.maxAttempts || 3
+        });
+      } catch (error) {
+        // Nothing was queued: hand the slot back so the next tick retries it.
+        await scheduleModel.updateOne(
+          { _id: schedule._id, nextRunAt },
+          { $set: { nextRunAt: dueAt } }
+        );
+        throw error;
+      }
+
+      if (queued.enqueued) {
+        await scheduleModel.updateOne({ _id: schedule._id }, {
+          $set: { lastTriggeredAt: now, 'metadata.lastSkipReason': null, 'metadata.lastSkippedAt': null }
+        });
+      } else {
+        // A due run that was not queued (e.g. the previous run is still going) used to leave no trace
+        // at all. Remember why, so it shows on the schedule and in the worker log.
+        console.warn(`[scheduler] due run not queued schedule=${schedule._id} workflow=${schedule.workflowId} tenant=${schedule.tenantId} reason=${queued.reason || 'unknown'}`);
+        await scheduleModel.updateOne({ _id: schedule._id }, {
+          $set: { 'metadata.lastSkipReason': queued.reason || 'unknown', 'metadata.lastSkippedAt': now }
+        });
+      }
 
       results.push({
         scheduleId: schedule._id,
@@ -418,7 +474,7 @@ async function evaluateDueSchedules(now = new Date()) {
             'metadata.lastScheduleError': error.message
           };
 
-      await WorkflowSchedule.updateOne(
+      await scheduleModel.updateOne(
         { _id: schedule._id },
         { $set: update }
       );
@@ -469,7 +525,8 @@ async function recordMissedTriggers(scheduleId, fromTime, toTime) {
   return records;
 }
 
-async function replayMissedTriggers(scheduleId) {
+// At most `limit` oldest pending slots per call, so one click can't queue hundreds of runs.
+async function replayMissedTriggers(scheduleId, { limit = 50 } = {}) {
   const schedule = await WorkflowSchedule.findById(scheduleId).lean();
   if (!schedule) {
     const err = new Error('schedule not found');
@@ -480,7 +537,7 @@ async function replayMissedTriggers(scheduleId) {
   const pending = await MissedTrigger.find({
     scheduleId,
     status: 'pending_replay'
-  }).sort({ intendedRunAt: 1 });
+  }).sort({ intendedRunAt: 1 }).limit(limit);
 
   const replayed = [];
 
@@ -530,6 +587,7 @@ module.exports = {
   ingestEventTrigger,
   createSchedule,
   evaluateDueSchedules,
+  getStaleGraceMs,
   recordMissedTriggers,
   replayMissedTriggers
 };

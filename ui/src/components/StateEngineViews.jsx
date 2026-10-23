@@ -26,11 +26,22 @@ function formatDate(value, pattern = 'MMM d, HH:mm') {
 }
 
 // One line saying what the engine decided to do about notifying.
-function describeNotification(notification, deliveryStatus) {
+const SKIPPED_LABELS = {
+  no_notification_on_path: 'this run reached no email or messaging step',
+  recipients_opted_out: 'everyone on this alert has paused or muted these emails (Email Configurations)',
+};
+
+function describeNotification(notification, deliveryStatus, skippedReason) {
   if (!notification) return '-';
   if (notification.reason) {
     const label = NOTIFICATION_REASON_LABELS[notification.reason] || notification.reason;
+    if (deliveryStatus === 'dry_run') return `Would send: ${label} (dry run, nothing sent)`;
+    if (skippedReason) return `${label} not sent: ${SKIPPED_LABELS[skippedReason] || skippedReason}`;
     return `${label} · ${DELIVERY_LABELS[deliveryStatus] || deliveryStatus || ''}`;
+  }
+  if (deliveryStatus === 'dry_run' && notification.candidate_reason) {
+    const label = NOTIFICATION_REASON_LABELS[notification.candidate_reason] || notification.candidate_reason;
+    return `${label} would be held: ${SUPPRESSION_LABELS[notification.suppressed_by] || notification.suppressed_by} (dry run)`;
   }
   if (notification.candidate_reason) {
     const label = NOTIFICATION_REASON_LABELS[notification.candidate_reason] || notification.candidate_reason;
@@ -63,6 +74,12 @@ export function RunStateDecisionCard({ run }) {
         {error && (
           <p className="text-sm text-red-600 mb-3">State engine error: {error}</p>
         )}
+        {evaluation?.dry_run && (
+          <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-3 py-2 mb-3">
+            Dry run: this manual run did not change the alert state, start a cooldown or send anything.
+            Tick "Send notifications and update alert state" when running to make it live.
+          </p>
+        )}
         {evaluation && (
           <dl className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
             <div>
@@ -93,7 +110,7 @@ export function RunStateDecisionCard({ run }) {
             <div>
               <dt className="text-gray-500">Notification</dt>
               <dd className="font-medium mt-1">
-                {describeNotification(evaluation.notification, evaluation.delivery_status)}
+                {describeNotification(evaluation.notification, evaluation.delivery_status, evaluation.delivery_skipped_reason)}
               </dd>
               {evaluation.telegram_status && (
                 <dd className="text-xs text-gray-500 mt-1">

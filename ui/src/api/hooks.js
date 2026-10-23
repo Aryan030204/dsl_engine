@@ -7,7 +7,8 @@ import {
   scheduleApi,
   schedulerApi,
   triggerApi,
-  stateApi
+  stateApi,
+  emailConfigApi
 } from './endpoints';
 import { useTenant } from '../context/TenantContext';
 
@@ -236,12 +237,17 @@ export function useDeleteGlobalWorkflow() {
 
 // ============ Run Hooks ============
 
+// Runs that have not finished yet: the page keeps refreshing until they do.
+const UNFINISHED_RUN_STATUSES = new Set(['queued', 'deferred', 'running', 'retrying', 'recovering']);
+const isUnfinishedRun = (run) => UNFINISHED_RUN_STATUSES.has(String(run?.status || '').toLowerCase());
+
 export function useWorkflowRuns(workflowId) {
   const { tenantId } = useTenant();
   return useQuery({
     queryKey: ['runs', tenantId, workflowId],
     queryFn: () => runApi.list(tenantId, workflowId),
     enabled: !!workflowId,
+    refetchInterval: (query) => ((query.state.data || []).some(isUnfinishedRun) ? 3000 : false),
   });
 }
 
@@ -277,6 +283,7 @@ export function useRun(workflowId, runId) {
     queryKey: ['run', tenantId, workflowId, runId],
     queryFn: () => runApi.get(tenantId, workflowId, runId),
     enabled: !!workflowId && !!runId,
+    refetchInterval: (query) => (isUnfinishedRun(query.state.data) ? 3000 : false),
   });
 }
 
@@ -289,7 +296,11 @@ export function useExecuteWorkflow(workflowId) {
       if (input && input.payload !== undefined) {
         return runApi.execute(tenantId, workflowId, input.payload, { mode: input.mode });
       }
-      return runApi.execute(tenantId, workflowId, input, {});
+      // `mode` selects async (queued, executed by the scheduler worker) and must travel as the
+      // ?mode= query parameter: the server ignores it in the request body, which silently made
+      // every UI run synchronous.
+      const { mode, ...body } = input || {};
+      return runApi.execute(tenantId, workflowId, body, { mode });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['runs', tenantId, workflowId] });
@@ -440,3 +451,36 @@ export function useInsights() {
     queryFn: () => insightApi.list(tenantId),
   });
 }
+
+// ============ Email Configurations ============
+
+const EMAIL_CONFIG_KEY = ['emailConfig'];
+
+export function useEmailRecipients() {
+  return useQuery({ queryKey: [...EMAIL_CONFIG_KEY, 'recipients'], queryFn: emailConfigApi.listRecipients });
+}
+
+export function useEmailRecipient(email) {
+  return useQuery({
+    queryKey: [...EMAIL_CONFIG_KEY, 'recipient', email],
+    queryFn: () => emailConfigApi.getRecipient(email),
+    enabled: !!email,
+  });
+}
+
+export function useEmailConfigWorkflows(enabled = true) {
+  return useQuery({ queryKey: [...EMAIL_CONFIG_KEY, 'workflows'], queryFn: emailConfigApi.listWorkflows, enabled });
+}
+
+// Every change refreshes all Email Configurations data (people, a person, the by-workflow view).
+function useEmailConfigMutation(mutationFn) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: EMAIL_CONFIG_KEY }),
+  });
+}
+
+export const useUpdateEmailPreferences = () => useEmailConfigMutation(({ email, patch }) => emailConfigApi.updatePreferences(email, patch));
+export const useSetEmailMute = () => useEmailConfigMutation(({ email, workflowKey, muted }) => emailConfigApi.setMute(email, workflowKey, muted));
+export const useChangeEmailWorkflows = () => useEmailConfigMutation(({ email, add, remove }) => emailConfigApi.changeWorkflows(email, { add, remove }));

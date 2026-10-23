@@ -7,7 +7,7 @@ const WorkflowSchedule = require('../models/WorkflowSchedule');
 const WorkflowJob = require('../models/WorkflowJob');
 const Tenant = require('../models/Tenant');
 const { validateWorkflowDefinition } = require('../validation/workflowDefinition');
-const { getNextRunAt } = require('../../scheduler/app/cronUtils');
+const { getNextRunAt, validateCronExpr } = require('../../scheduler/app/cronUtils');
 const {
   SCHEDULE_WINDOW_MODES,
   SCHEDULE_WINDOW_MODE_VALUES
@@ -188,6 +188,13 @@ async function createBulkScheduleJob({ workflowId, tenantIds, payload }) {
     throw error;
   }
 
+  const cronCheck = validateCronExpr(cronExpr);
+  if (!cronCheck.ok) {
+    const error = new Error(cronCheck.error);
+    error.status = 400;
+    throw error;
+  }
+
   if (timezone && !isSupportedTimeZone(timezone)) {
     const error = new Error('timezone must be a supported IANA timezone');
     error.status = 400;
@@ -319,7 +326,7 @@ async function processBulkScheduleJob(jobId) {
           timezone: resolvedTimeZone,
           windowMode: payload.windowMode || SCHEDULE_WINDOW_MODES.PREVIOUS_COMPLETE_DAY,
           isActive: payload.isActive !== false,
-          overlapPolicy: payload.overlapPolicy || 'queue_one_pending',
+          overlapPolicy: payload.overlapPolicy || 'replace_running',
           retryPolicy: payload.retryPolicy || { maxAttempts: 3, backoffSeconds: [30, 120, 600] },
           nextRunAt: getNextRunAt(payload.cronExpr, now, resolvedTimeZone),
           lastEvaluatedAt: now,

@@ -25,8 +25,8 @@ export default function SettingsPage() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [timezoneDrafts, setTimezoneDrafts] = useState({});
   const [currencyDrafts, setCurrencyDrafts] = useState({});
+  const [shopDomainDrafts, setShopDomainDrafts] = useState({});
   const [brandingDrafts, setBrandingDrafts] = useState({});
-  const [storeDrafts, setStoreDrafts] = useState({});
 
   const handleDeleteTenant = async (tid) => {
     if (!confirm(`Are you sure you want to deactivate tenant '${tid}'?`)) return;
@@ -85,26 +85,22 @@ export default function SettingsPage() {
     }
   };
 
-  const getDraftStore = (tenant) => storeDrafts[tenant.tenantId] ?? tenant.settings?.shopifyDomain ?? '';
+  const getDraftShopDomain = (tenant) => shopDomainDrafts[tenant.tenantId] ?? tenant.settings?.shopifyDomain ?? '';
 
-  const handleSaveStore = async (tenant) => {
+  const handleSaveShopDomain = async (tenant) => {
     try {
       await updateTenant.mutateAsync({
         tenantId: tenant.tenantId,
         updates: {
           settings: {
             ...(tenant.settings || {}),
-            shopifyDomain: getDraftStore(tenant).trim()
+            shopifyDomain: getDraftShopDomain(tenant).trim()
           }
         }
       });
-      setStoreDrafts((prev) => {
-        const { [tenant.tenantId]: _saved, ...rest } = prev;
-        return rest;
-      });
-      toast.success(`Shopify store updated for '${tenant.tenantId}'`);
+      toast.success(`Shopify domain updated for '${tenant.tenantId}'`);
     } catch (err) {
-      toast.error(err.response?.data?.error || 'Failed to update Shopify store');
+      toast.error(err.response?.data?.error || 'Failed to update Shopify domain');
     }
   };
 
@@ -248,26 +244,25 @@ export default function SettingsPage() {
                       </div>
                       <div className="mt-3 flex items-end gap-2">
                         <div className="flex-1">
-                          <label className="block text-xs text-gray-500 mb-1">Shopify store</label>
+                          <label className="block text-xs text-gray-500 mb-1">Shopify domain (inventory report cache)</label>
                           <input
-                            value={getDraftStore(tenant)}
-                            onChange={(e) => setStoreDrafts((prev) => ({
+                            className="h-9 w-full border border-gray-300 rounded-lg px-3 text-sm bg-white"
+                            placeholder="your-store.myshopify.com"
+                            value={getDraftShopDomain(tenant)}
+                            onChange={(e) => setShopDomainDrafts((prev) => ({
                               ...prev,
                               [tenant.tenantId]: e.target.value
                             }))}
-                            placeholder="my-store.myshopify.com"
-                            className="h-9 w-full border border-gray-300 rounded-lg px-3 text-sm bg-white"
                           />
-                          <p className="mt-1 text-[11px] text-gray-400">Used to rank the inventory report by sales. Leave empty if this tenant has no store.</p>
                         </div>
                         <Button
                           size="sm"
                           variant="secondary"
-                          onClick={() => handleSaveStore(tenant)}
+                          onClick={() => handleSaveShopDomain(tenant)}
                           loading={updateTenant.isPending}
                         >
                           <Save className="w-4 h-4 mr-1" />
-                          Save Store
+                          Save Domain
                         </Button>
                       </div>
                       <div className="mt-4 border-t border-gray-200 pt-3">

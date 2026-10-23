@@ -23,6 +23,18 @@ function buildSslConfig() {
 
 const sslConfig = buildSslConfig();
 
+// A query that outlives this limit is killed by MySQL itself (max_execution_time, SELECT only),
+// so an abandoned or runaway workflow query cannot keep running and pile up on the server.
+// DB_QUERY_TIMEOUT_MS=0 disables it. Queries slower than DB_SLOW_QUERY_MS are logged.
+function readMs(name, fallback) {
+  const raw = process.env[name];
+  if (raw === undefined || raw === '') return fallback;
+  const value = Number(raw);
+  return Number.isFinite(value) && value >= 0 ? Math.floor(value) : fallback;
+}
+const QUERY_TIMEOUT_MS = readMs('DB_QUERY_TIMEOUT_MS', 180000);
+const SLOW_QUERY_MS = readMs('DB_SLOW_QUERY_MS', 5000);
+
 // The tenant ID is used as the MySQL database name, so only plain identifiers are accepted,
 // and the number of live pools is capped so arbitrary IDs can't exhaust connections.
 const TENANT_DB_NAME = /^[A-Za-z0-9_]{1,64}$/;
@@ -61,6 +73,14 @@ function getPool(dbName) {
     queueLimit: 0
   });
 
+  if (QUERY_TIMEOUT_MS > 0) {
+    pool.pool.on('connection', (connection) => {
+      connection.query(`SET SESSION max_execution_time = ${QUERY_TIMEOUT_MS}`, (err) => {
+        if (err) console.warn(`[QueryExecutor] could not set max_execution_time: ${err.message}`);
+      });
+    });
+  }
+
   pools.set(dbName, pool);
   return pool;
 }
@@ -78,8 +98,30 @@ module.exports = {
 
     const pool = getPool(tenantId);
     const params = querySpec.params || [];
+    const label = `tenant=${tenantId} type=${querySpec.meta?.type || 'query'}${querySpec.meta?.dimension ? ` dimension=${querySpec.meta.dimension}` : ''}`;
+    const startedAt = Date.now();
 
-    const [rows] = await pool.query(querySpec.sql, params);
-    return { rows };
+    try {
+      // The client-side timeout is only a backstop (e.g. a hung connection); MySQL enforces the real limit.
+      const [rows] = await pool.query(
+        { sql: querySpec.sql, timeout: QUERY_TIMEOUT_MS > 0 ? QUERY_TIMEOUT_MS + 5000 : undefined },
+        params
+      );
+      const elapsed = Date.now() - startedAt;
+      if (elapsed >= SLOW_QUERY_MS) {
+        console.warn(`[QueryExecutor] slow query ${label} ${elapsed}ms rows=${rows.length}`);
+      }
+      return { rows };
+    } catch (error) {
+      const elapsed = Date.now() - startedAt;
+      const timedOut = error?.errno === 3024 || error?.code === 'ER_QUERY_TIMEOUT' || error?.code === 'PROTOCOL_SEQUENCE_TIMEOUT';
+      console.warn(`[QueryExecutor] query failed ${label} after ${elapsed}ms: ${error.message}`);
+      if (timedOut) {
+        const timeoutError = new Error(`Query timed out after ${Math.round(QUERY_TIMEOUT_MS / 1000)}s (${label}). The database is slow or overloaded.`);
+        timeoutError.code = 'QUERY_TIMEOUT';
+        throw timeoutError;
+      }
+      throw error;
+    }
   }
 };

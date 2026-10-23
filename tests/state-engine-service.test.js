@@ -181,15 +181,27 @@ test('rollback never undoes a newer execution\'s alert', async () => {
   assert.equal((await store.getState('t1', 'wf1')).state, 'CRITICAL');
 });
 
-test('with no captured email, the built-in email goes to the workflow recipients', async () => {
-  const { sender, run } = setup();
-  const result = await run('run-1', -28, { intents: [], fallbackRecipients: ['team@example.com'] });
+test('a run whose path reached no notifier sends nothing and hands the cooldown back', async () => {
+  const { store, sender, run, setClock } = setup();
+  const silent = await run('run-1', -28, { intents: [], fallbackRecipients: ['team@example.com'] });
 
-  assert.equal(result.delivery.status, 'sent');
-  const mail = sender.calls.at(-1);
-  assert.deepEqual(mail.to, ['team@example.com']);
-  assert.equal(mail.subject, 'CVR drop');
-  assert.match(mail.text, /cvr_delta_pct is -28, at or below the critical threshold of -25\./);
+  // The engine decided to notify, but the workflow's own path had no email node: it never invents one.
+  assert.equal(silent.evaluation.resulting_state, 'CRITICAL');
+  assert.equal(silent.evaluation.notification.should_send, true);
+  assert.equal(silent.delivery.status, 'none');
+  assert.equal(silent.delivery.skippedReason, 'no_notification_on_path');
+  assert.equal(silent.delivery.rolledBack, true);
+  assert.equal(sender.calls.length, 0);
+  const state = await store.getState('t1', 'wf1');
+  assert.equal(state.state, 'CRITICAL');
+  assert.equal(state.cooldown, null);
+  assert.equal(silent.summary.delivery_skipped_reason, 'no_notification_on_path');
+
+  // Nothing consumed the cooldown, so the next run that does reach a notifier still sends.
+  setClock('2026-01-01T10:05:00Z');
+  const next = await run('run-2', -28);
+  assert.equal(next.delivery.status, 'sent');
+  assert.equal(sender.calls.length, 1);
 });
 
 test('returning to NORMAL records the transition and sends nothing', async () => {
@@ -209,7 +221,8 @@ test('returning to NORMAL records the transition and sends nothing', async () =>
 
 test('no recipients fails clearly without calling SMTP, and hands the cooldown back', async () => {
   const { store, sender, run } = setup();
-  const result = await run('run-1', -17, { intents: [], fallbackRecipients: [] });
+  // A captured email that has nobody to go to (no recipients on the node).
+  const result = await run('run-1', -17, { intents: [{ to: [], subject: 'CVR drop', html: '<p>x</p>', text: 'x' }], fallbackRecipients: [] });
 
   assert.equal(result.delivery.status, 'failed');
   assert.match(result.delivery.error, /Email Insight/);

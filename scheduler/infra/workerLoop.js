@@ -5,10 +5,12 @@ const {
   promoteDeferredRun,
   republishDueRetryRuns,
   bootstrapDispatchRunnableRuns,
-  recoverExpiredRunningRuns
+  recoverExpiredRunningRuns,
+  failTimedOutRuns
 } = require('../app/runQueueService');
 const { executeRun } = require('../../server/services/workflowExecutionService');
 const { getRetryDelayMs } = require('../domain/retryPolicy');
+const { RUN_TIMEOUT_CODE, RUN_CANCELED_CODE } = require('../../lib/runTimeout');
 const { getRabbitWorkflowRunQueue } = require('./runQueue/RabbitWorkflowRunQueue');
 
 async function processOne(workerId) {
@@ -37,6 +39,26 @@ async function processClaimedRun(run) {
   } catch (error) {
     const workflowName = run.definitionJson?.name || 'unknown';
     console.error(`[scheduler-worker] execution failed run=${run._id} workflow=${run.workflowId} workflowName="${workflowName}" attempt=${run.attempt}/${run.maxAttempts || 3} error=${error.message}`);
+    // Replaced by a newer scheduled run: already marked `canceled`, and the replacement is queued.
+    // Nothing to save, retry or promote.
+    if (error.code === RUN_CANCELED_CODE) {
+      console.warn(`[scheduler-worker] canceled run=${run._id} workflow=${run.workflowId} workflowName="${workflowName}" (replaced by a newer run)`);
+      return { runId: run._id, status: 'canceled' };
+    }
+
+    // A run that hit the time limit is final: retrying would just burn the limit again.
+    if (error.code === RUN_TIMEOUT_CODE) {
+      run.status = 'failed';
+      run.finishedAt = new Date();
+      run.lastError = error.message;
+      run.leaseOwner = null;
+      run.leaseExpiresAt = null;
+      await run.save();
+      console.error(`[scheduler-worker] timed out run=${run._id} workflow=${run.workflowId} workflowName="${workflowName}" lastError=${run.lastError}`);
+      await promoteDeferredRun(run.tenantId, run.workflowId, run.executionKey);
+      return { runId: run._id, status: 'failed' };
+    }
+
     const delayMs = getRetryDelayMs(
       { maxAttempts: run.maxAttempts || 3, backoffSeconds: [30, 120, 600] },
       run.attempt
@@ -76,6 +98,7 @@ async function runLoopMongo({ workerId, intervalMs = 2000, stopSignal }) {
   while (!stopSignal.stopped) {
     try {
       await recoverExpiredRunningRuns();
+      await failTimedOutRuns();
       const result = await processOne(workerId);
       if (!result) {
         await new Promise(resolve => setTimeout(resolve, intervalMs));
@@ -95,11 +118,13 @@ async function runLoopRabbit({ workerId, intervalMs = 2000, stopSignal }) {
     // Best-effort recovery: re-dispatch runnable DB-backed runs when worker starts.
     await bootstrapDispatchRunnableRuns();
     await recoverExpiredRunningRuns();
+    await failTimedOutRuns();
 
     const retryTickMs = Number(process.env.SCHEDULER_RETRY_TICK_MS || 2000);
     retryTimer = setInterval(async () => {
       try {
         await recoverExpiredRunningRuns();
+        await failTimedOutRuns();
         await republishDueRetryRuns();
       } catch (error) {
         console.error('[scheduler-worker] retry republish failed', error.message);

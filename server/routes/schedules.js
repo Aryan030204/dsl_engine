@@ -2,7 +2,7 @@ const express = require('express');
 const WorkflowSchedule = require('../models/WorkflowSchedule');
 const MissedTrigger = require('../models/MissedTrigger');
 const { createSchedule, replayMissedTriggers } = require('../../scheduler/app/schedulerService');
-const { getNextRunAt } = require('../../scheduler/app/cronUtils');
+const { getNextRunAt, validateCronExpr } = require('../../scheduler/app/cronUtils');
 const {
   SCHEDULE_WINDOW_MODES,
   SCHEDULE_WINDOW_MODE_VALUES
@@ -27,6 +27,10 @@ router.post('/:workflowId/schedules', async (req, res, next) => {
 
     if (!cronExpr) {
       return res.status(400).json({ error: 'cronExpr is required' });
+    }
+    const cronCheck = validateCronExpr(cronExpr);
+    if (!cronCheck.ok) {
+      return res.status(400).json({ error: cronCheck.error });
     }
 
     let resolvedTimeZone = timezone;
@@ -89,6 +93,11 @@ router.patch('/:workflowId/schedules/:scheduleId', async (req, res, next) => {
 
     const current = await WorkflowSchedule.findOne({ _id: scheduleId, tenantId, workflowId }).lean();
     if (!current) return res.status(404).json({ error: 'schedule not found' });
+
+    if (updates.cronExpr !== undefined) {
+      const cronCheck = validateCronExpr(updates.cronExpr);
+      if (!cronCheck.ok) return res.status(400).json({ error: cronCheck.error });
+    }
 
     if (updates.timezone !== undefined && !isSupportedTimeZone(updates.timezone)) {
       return res.status(400).json({ error: 'timezone must be a supported IANA timezone' });

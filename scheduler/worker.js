@@ -6,9 +6,8 @@ const mongoose = require('mongoose');
 require('dotenv').config();
 
 const { runLoop } = require('./infra/workerLoop');
-const { evaluateDueSchedules, recordMissedTriggers } = require('./app/schedulerService');
+const { evaluateDueSchedules } = require('./app/schedulerService');
 const { startAlertSubscriber } = require('./infra/subscriber/alertSubscriberLoop');
-const WorkflowSchedule = require('../server/models/WorkflowSchedule');
 
 async function start() {
   const mongoUri = process.env.MONGO_URI;
@@ -28,24 +27,26 @@ async function start() {
   const stopSignal = { stopped: false };
   let subscriberHandle = null;
 
-  const cronTimer = cronEnabled
-    ? setInterval(async () => {
-      const now = new Date();
-      const schedules = await WorkflowSchedule.find({
-        triggerType: 'cron',
-        isActive: true,
-      }).lean();
-
-      for (const schedule of schedules) {
-        const last = schedule.lastEvaluatedAt ? new Date(schedule.lastEvaluatedAt) : null;
-        if (!last || now <= last) continue;
-        await recordMissedTriggers(schedule._id, last, now);
-        await WorkflowSchedule.updateOne({ _id: schedule._id }, { $set: { lastEvaluatedAt: now } });
+  // The tick must never throw (an unhandled rejection in a timer callback ends the worker process)
+  // and must never overlap itself when a slow tick runs past the interval.
+  let tickInFlight = false;
+  const cronTick = async () => {
+    if (tickInFlight) return;
+    tickInFlight = true;
+    try {
+      const results = await evaluateDueSchedules(new Date());
+      if (results.length) {
+        const queued = results.filter((result) => result.enqueued).length;
+        console.log(`[scheduler-worker] cron tick: ${queued} queued, ${results.length - queued} not queued (${results.filter((result) => !result.enqueued).map((result) => result.reason).join(', ') || 'none'})`);
       }
-
-      await evaluateDueSchedules(now);
-    }, cronTickMs)
-    : null;
+    } catch (error) {
+      console.error('[scheduler-worker] cron tick failed', error.message);
+    } finally {
+      tickInFlight = false;
+    }
+  };
+  const cronTimer = cronEnabled ? setInterval(cronTick, cronTickMs) : null;
+  if (cronEnabled) void cronTick();
 
   if (alertSubscriberEnabled) {
     subscriberHandle = await startAlertSubscriber({ stopSignal });

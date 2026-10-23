@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 
 const WorkflowRunner = require('../engine/WorkflowRunner');
 const { validateWorkflowDefinition } = require('../server/validation/workflowDefinition');
-const { prepareNotificationMode, applyStateEngine } = require('../server/services/workflowExecutionService');
+const { prepareNotificationMode, applyStateEngine, isDryRun } = require('../server/services/workflowExecutionService');
 const { createStateEngineService } = require('../server/services/stateEngineService');
 const { createFakeStateStore, createRecordingSender } = require('./helpers/fakeStateStore');
 
@@ -103,7 +103,8 @@ test('applyStateEngine records the decision on the run and never throws', async 
   };
 
   // Always-quiet window: NORMAL -> CRITICAL still goes out (direct escalation bypass).
-  await applyStateEngine({ run, result: { context: context(-30) }, intents: [], stateEngine });
+  const captured = [{ to: ['ops@example.com', 'team@example.com'], subject: 'CVR drop', html: '<p>x</p>', text: 'x' }];
+  await applyStateEngine({ run, result: { context: context(-30) }, intents: captured, stateEngine });
   assert.equal(run.stateEvaluation.resulting_state, 'CRITICAL');
   assert.equal(run.stateEvaluation.delivery_status, 'sent');
   assert.deepEqual(sender.calls[0].to, ['ops@example.com', 'team@example.com']);
@@ -150,4 +151,38 @@ test('validation: workflow_purpose and state_config', () => {
   assert.ok(validateWorkflowDefinition(noEmail).errors.some((e) => /no node sends a notification/.test(e)));
   // A disabled config is not validated beyond its shape.
   assert.equal(validateWorkflowDefinition(definition({ state_config: { enabled: false } })).ok, true);
+});
+
+test('manual runs are dry runs: they preview the decision but change no state and send nothing', async () => {
+  const store = createFakeStateStore();
+  const sender = createRecordingSender();
+  const stateEngine = createStateEngineService({ store, sender, now: () => new Date('2026-01-01T10:00:00Z') });
+  const captured = [{ to: ['ops@example.com'], subject: 'CVR drop', html: '<p>x</p>', text: 'x' }];
+  const makeRun = (id, extra = {}) => ({
+    _id: id, tenantId: 't1', workflowId: 'wf1', triggerType: 'manual',
+    definitionJson: definition({ state_config: stateConfig }),
+    save: async () => {}, ...extra
+  });
+
+  const dry = makeRun('run-1');
+  assert.equal(isDryRun(dry), true);
+  await applyStateEngine({ run: dry, result: { context: context(-30) }, intents: captured, stateEngine });
+  assert.equal(dry.stateEvaluation.dry_run, true);
+  assert.equal(dry.stateEvaluation.delivery_status, 'dry_run');
+  assert.equal(dry.stateEvaluation.resulting_state, 'CRITICAL');
+  assert.equal(dry.stateEvaluation.notification.should_send, true);
+  assert.equal(sender.calls.length, 0);
+  assert.equal(await store.getState('t1', 'wf1'), null);
+  assert.equal(await store.getEvaluation('t1', 'wf1', 'run-1'), null);
+
+  // A dry run does not start a cooldown either: a live run right after still sends.
+  const live = makeRun('run-2', { triggerType: 'manual', notifyLive: true });
+  assert.equal(isDryRun(live), false);
+  await applyStateEngine({ run: live, result: { context: context(-30) }, intents: captured, stateEngine });
+  assert.equal(live.stateEvaluation.delivery_status, 'sent');
+  assert.equal(sender.calls.length, 1);
+
+  // Scheduled and alert-triggered runs are always live.
+  assert.equal(isDryRun(makeRun('run-3', { triggerType: 'cron' })), false);
+  assert.equal(isDryRun(makeRun('run-4', { triggerType: 'event' })), false);
 });

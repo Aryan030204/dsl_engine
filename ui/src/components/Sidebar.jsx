@@ -6,6 +6,7 @@ import {
   Lightbulb,
   Settings,
   ShoppingBag,
+  Mail,
   LogOut
 } from 'lucide-react';
 import clsx from 'clsx';
@@ -15,6 +16,7 @@ const navItems = [
   { to: '/workflows', icon: GitBranch, label: 'Workflows' },
   { to: '/runs', icon: Play, label: 'Runs' },
   { to: '/insights', icon: Lightbulb, label: 'Insights' },
+  { to: '/email-configurations', icon: Mail, label: 'Email Configurations' },
   { to: '/settings', icon: Settings, label: 'Settings' },
   { to: '/shopify-hub', icon: ShoppingBag, label: 'Shopify Hub' },
 ];

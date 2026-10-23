@@ -123,17 +123,17 @@ function fitCellLines(value, maxLength, maxLines) {
 
 function renderInventoryTableRow(row, index, y) {
   const left = 48;
-  const widths = [42, 286, 250, 140, 140, 166];
+  const widths = [42, 250, 210, 120, 120, 120, 162];
   const values = [String(index + 1), ...((row.cells || []).map((cell) => cell.value))];
   const height = 88;
   let x = left;
   let markup = `<rect x="${left}" y="${y}" width="${widths.reduce((sum, width) => sum + width, 0)}" height="${height}" fill="${index % 2 ? '#ffffff' : '#f8fafc'}" stroke="#e2e8f0"/>`;
   values.slice(0, widths.length).forEach((value, columnIndex) => {
     const cellWidth = widths[columnIndex];
-    const isStatus = columnIndex === 5;
+    const isStatus = columnIndex === 6;
     const status = String(value || '');
     const statusColor = status === 'Critical' ? '#dc2626' : status === 'Low stock' ? '#d97706' : status === 'Healthy' ? '#059669' : '#64748b';
-    const lines = fitCellLines(value, columnIndex === 2 ? 27 : columnIndex === 1 ? 31 : 18, 2);
+    const lines = fitCellLines(value, columnIndex === 2 ? 23 : columnIndex === 1 ? 26 : 14, 2);
     if (isStatus) {
       markup += `<rect x="${x + 10}" y="${y + 28}" width="${cellWidth - 20}" height="32" rx="16" fill="${statusColor}20"/>`;
       markup += text(x + (cellWidth / 2), y + 50, status, { size: 16, weight: 800, color: statusColor, anchor: 'middle' });
@@ -141,11 +141,11 @@ function renderInventoryTableRow(row, index, y) {
       markup += `<rect x="${x + 8}" y="${y + 28}" width="28" height="32" rx="5" fill="#dbeafe"/>`;
       markup += text(x + 22, y + 50, status, { size: 16, weight: 800, color: '#1d4ed8', anchor: 'middle' });
     } else {
-      const color = columnIndex === 4 ? (status === '—' ? '#64748b' : '#111827') : '#1f2937';
+      const color = columnIndex === 5 ? (status === '—' ? '#64748b' : '#111827') : '#1f2937';
       lines.forEach((line, lineIndex) => {
         markup += text(x + 10, y + 37 + (lineIndex * 24), line, {
-          size: columnIndex === 4 ? 19 : 15,
-          weight: columnIndex === 4 ? 800 : 600,
+          size: columnIndex === 5 ? 19 : 15,
+          weight: columnIndex === 5 || columnIndex === 3 ? 800 : 600,
           color
         });
       });
@@ -203,12 +203,12 @@ async function renderInventoryTelegramImages({ title, reportViewModel, workflowN
     });
 
     svg += text(left, sectionY, pageIndex === 0 ? (table.title || 'Products with Lowest DOH').toUpperCase() : `${table.title || 'PRODUCTS WITH LOWEST DOH'} (CONTINUED)`.toUpperCase(), { size: 19, weight: 900, color: '#111827' });
-    const widths = [42, 286, 250, 140, 140, 166];
+    const widths = [42, 250, 210, 120, 120, 120, 162];
     svg += `<rect x="${left}" y="${tableY}" width="${tableWidth}" height="54" rx="5" fill="#f1f5f9" stroke="#dbe3ee"/>`;
-    const labels = ['#', 'PRODUCT', 'SKU', 'DRR (7 DAYS)', 'DOH (7 DAYS)', 'STATUS'];
+    const labels = ['#', 'PRODUCT', 'SKU', 'INVENTORY', 'DRR (7 DAYS)', 'DOH (7 DAYS)', 'STATUS'];
     let headerX = left;
     labels.forEach((label, index) => {
-      const align = index === 3 || index === 4 ? 'end' : index === 5 ? 'middle' : 'start';
+      const align = index >= 3 && index <= 5 ? 'end' : index === 6 ? 'middle' : 'start';
       const x = align === 'end' ? headerX + widths[index] - 10 : align === 'middle' ? headerX + widths[index] / 2 : headerX + 10;
       svg += text(x, tableY + 34, label, { size: 12, weight: 800, color: '#64748b', anchor: align });
       headerX += widths[index];

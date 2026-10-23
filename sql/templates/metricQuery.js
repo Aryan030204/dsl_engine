@@ -1,6 +1,35 @@
 // sql/templates/metricQuery.js
 const { normalizeWindowForQuery, isFullDayAlignedWindow } = require('../../lib/timeWindowUtils');
 
+const PAYMENT_METRICS = new Set(['cod_orders', 'ppcod_orders', 'prepaid_orders']);
+
+// Hourly tables keep date and hour in separate columns. The CONCAT predicate gives the exact
+// hour boundary but cannot use an index, so a plain `date` range (same bounds, widened to
+// whole days) is added in front of it to let MySQL range-scan instead of reading every row.
+const HOURLY_TS = "CONCAT(date, ' ', LPAD(hour, 2, '0'), ':00:00')";
+function hourlyWhere() {
+  return `date >= DATE(?)
+    AND date <= DATE(?)
+    AND ${HOURLY_TS} >= ?
+    AND ${HOURLY_TS} <  ?`;
+}
+function hourlyParams(range) {
+  return [range.start, range.end, range.start, range.end];
+}
+
+// shopify_orders has no index that starts with created_at, but created_date is indexed. A plain
+// created_date range (string compare against 'YYYY-MM-DD', widened to whole days) narrows the scan
+// to the right days; the exact created_at bounds still decide which orders count.
+function ordersWhere() {
+  return `created_date >= LEFT(?, 10)
+      AND created_date <= LEFT(?, 10)
+      AND created_at >= ?
+      AND created_at <  ?`;
+}
+function ordersParams(start, end) {
+  return [start, end, start, end];
+}
+
 // Sales source for one window (tenant-local "YYYY-MM-DD HH:MM:SS" bounds):
 //   - whole days (midnight to midnight) -> overall_summary, the daily rollup
 //   - anything else (e.g. today until the scheduled hour) -> hour_wise_sales
@@ -29,10 +58,9 @@ function salesCte(name, range) {
     COALESCE(SUM(total_sales), 0) AS sales,
     COALESCE(SUM(number_of_orders), 0) AS orders
   FROM hour_wise_sales
-  WHERE CONCAT(date, ' ', LPAD(hour, 2, '0'), ':00:00') >= ?
-    AND CONCAT(date, ' ', LPAD(hour, 2, '0'), ':00:00') <  ?
+  WHERE ${hourlyWhere()}
 )`,
-    params: [range.start, range.end]
+    params: hourlyParams(range)
   };
 }
 
@@ -51,6 +79,9 @@ module.exports = function metricQuery({ tenantId, metrics = [], window, baseline
   // Sales tables aren't guaranteed in every tenant database -- only query them when
   // the workflow asks for sales or AOV.
   const includeSales = metrics.includes('sales') || metrics.includes('aov');
+  // The COD/PPCOD/Prepaid classification re-scans shopify_orders (GROUP BY order_name plus
+  // wildcard LIKEs), so it only runs when a payment metric is actually requested.
+  const includePayment = metrics.some((metric) => PAYMENT_METRICS.has(metric));
   const currentSales = includeSales ? salesCte('current_sales', normalizedWindow) : null;
   const baselineSales = includeSales ? salesCte('baseline_sales', normalizedBaselineWindow) : null;
 
@@ -62,8 +93,7 @@ current_sessions AS (
     COALESCE(SUM(number_of_atc_sessions), 0) AS atc_sessions,
     COALESCE(SUM(adjusted_number_of_sessions), 0) AS adjusted_sessions
   FROM hourly_sessions_summary_shopify
-  WHERE CONCAT(date, ' ', LPAD(hour, 2, '0'), ':00:00') >= ?
-    AND CONCAT(date, ' ', LPAD(hour, 2, '0'), ':00:00') <  ?
+  WHERE ${hourlyWhere()}
 ),
 baseline_sessions AS (
   SELECT
@@ -71,23 +101,20 @@ baseline_sessions AS (
     COALESCE(SUM(number_of_atc_sessions), 0) AS atc_sessions,
     COALESCE(SUM(adjusted_number_of_sessions), 0) AS adjusted_sessions
   FROM hourly_sessions_summary_shopify
-  WHERE CONCAT(date, ' ', LPAD(hour, 2, '0'), ':00:00') >= ?
-    AND CONCAT(date, ' ', LPAD(hour, 2, '0'), ':00:00') <  ?
+  WHERE ${hourlyWhere()}
 ),
 current_orders AS (
   SELECT
     COALESCE(COUNT(DISTINCT order_name), 0) AS orders
   FROM shopify_orders
-  WHERE created_at >= ?
-    AND created_at <  ?
+  WHERE ${ordersWhere()}
 ),
 baseline_orders AS (
   SELECT
     COALESCE(COUNT(DISTINCT order_name), 0) AS orders
   FROM shopify_orders
-  WHERE created_at >= ?
-    AND created_at <  ?
-),
+  WHERE ${ordersWhere()}
+)${includePayment ? `,
 current_payment_orders AS (
   SELECT
     COALESCE(SUM(payment_type = 'COD'), 0) AS cod_orders,
@@ -107,8 +134,7 @@ current_payment_orders AS (
         ELSE 'Prepaid'
       END AS payment_type
     FROM shopify_orders
-    WHERE created_at >= ?
-      AND created_at <  ?
+    WHERE ${ordersWhere()}
       AND order_name IS NOT NULL
     GROUP BY order_name
   ) classified
@@ -132,12 +158,11 @@ baseline_payment_orders AS (
         ELSE 'Prepaid'
       END AS payment_type
     FROM shopify_orders
-    WHERE created_at >= ?
-      AND created_at <  ?
+    WHERE ${ordersWhere()}
       AND order_name IS NOT NULL
     GROUP BY order_name
   ) classified
-)${includeSales ? `,
+)` : ''}${includeSales ? `,
 ${currentSales.sql},
 ${baselineSales.sql}` : ''}
 SELECT
@@ -152,12 +177,17 @@ SELECT
 
   co.orders AS current_orders,
   bo.orders AS baseline_orders,
-  cpo.cod_orders AS current_cod_orders,
+  ${includePayment ? `cpo.cod_orders AS current_cod_orders,
   bpo.cod_orders AS baseline_cod_orders,
   cpo.ppcod_orders AS current_ppcod_orders,
   bpo.ppcod_orders AS baseline_ppcod_orders,
   cpo.prepaid_orders AS current_prepaid_orders,
-  bpo.prepaid_orders AS baseline_prepaid_orders${includeSales ? `,
+  bpo.prepaid_orders AS baseline_prepaid_orders` : `0 AS current_cod_orders,
+  0 AS baseline_cod_orders,
+  0 AS current_ppcod_orders,
+  0 AS baseline_ppcod_orders,
+  0 AS current_prepaid_orders,
+  0 AS baseline_prepaid_orders`}${includeSales ? `,
 
   csl.sales AS current_sales,
   bsl.sales AS baseline_sales,
@@ -166,21 +196,20 @@ SELECT
 FROM current_sessions cs
 CROSS JOIN baseline_sessions bs
 CROSS JOIN current_orders co
-CROSS JOIN baseline_orders bo
+CROSS JOIN baseline_orders bo${includePayment ? `
 CROSS JOIN current_payment_orders cpo
-CROSS JOIN baseline_payment_orders bpo${includeSales ? `
+CROSS JOIN baseline_payment_orders bpo` : ''}${includeSales ? `
 CROSS JOIN current_sales csl
 CROSS JOIN baseline_sales bsl` : ''};
   `;
 
   const params = [
-    windowStart, windowEnd,
-    baselineStart, baselineEnd,
-    windowStart, windowEnd,
-    baselineStart, baselineEnd,
-    // payment-type orders: current window, then baseline window
-    windowStart, windowEnd,
-    baselineStart, baselineEnd,
+    ...hourlyParams(normalizedWindow),
+    ...hourlyParams(normalizedBaselineWindow),
+    ...ordersParams(windowStart, windowEnd),
+    ...ordersParams(baselineStart, baselineEnd),
+    // payment-type orders (only when requested): current window, then baseline window
+    ...(includePayment ? [...ordersParams(windowStart, windowEnd), ...ordersParams(baselineStart, baselineEnd)] : []),
     // optional sales: current, then baseline (dates or datetimes per salesCte)
     ...(includeSales ? [...currentSales.params, ...baselineSales.params] : [])
   ];

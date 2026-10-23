@@ -15,7 +15,9 @@ const router = express.Router({ mergeParams: true });
 router.post('/:workflowId/runs', async (req, res, next) => {
   try {
     const { tenantId, workflowId } = req.params;
-    const { version, context, rerun } = req.body || {};
+    const { version, context, rerun, notify } = req.body || {};
+    // Manual runs only notify and update alert state when explicitly asked to.
+    const notifyLive = notify === true;
     const mode = req.query.mode === 'async' ? 'async' : 'sync';
     const tenant = await Tenant.findOne({ tenantId }).lean();
     if (!tenant) return res.status(404).json({ error: 'tenant not found' });
@@ -63,6 +65,7 @@ router.post('/:workflowId/runs', async (req, res, next) => {
         definitionJson: workflowVersion.definitionJson,
         triggerType: 'manual',
         triggerRef: null,
+        notifyLive,
         overlapPolicy: 'queue_one_pending',
         maxAttempts: 3
       });
@@ -88,6 +91,7 @@ router.post('/:workflowId/runs', async (req, res, next) => {
       status: 'running',
       triggerType: 'manual',
       triggerRef: null,
+      notifyLive,
       executionKey: `${tenantId}:${workflowId}`,
       context: effectiveContext,
       definitionJson: workflowVersion.definitionJson,

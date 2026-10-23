@@ -26,8 +26,8 @@ const WorkflowScheduleSchema = new mongoose.Schema(
     isActive: { type: Boolean, default: true, index: true },
     overlapPolicy: {
       type: String,
-      enum: ['queue_one_pending', 'skip_if_running', 'allow_parallel'],
-      default: 'queue_one_pending'
+      enum: ['replace_running', 'queue_one_pending', 'skip_if_running', 'allow_parallel'],
+      default: 'replace_running'
     },
     retryPolicy: { type: RETRY_POLICY_SCHEMA, default: () => ({}) },
     nextRunAt: { type: Date, index: true },

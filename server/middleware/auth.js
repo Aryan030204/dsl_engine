@@ -14,8 +14,10 @@ function requireCsrfHeader(req, res, next) {
   next();
 }
 
-// Resolves the session cookie to a user. Returns null when absent/invalid/revoked.
-async function resolveUser(req) {
+// Resolves the session cookie to { user, decoded }, or null when it is absent, invalid, expired or
+// revoked. A database failure is NOT "not logged in": it throws, so callers can answer with a server
+// error instead of telling a signed-in user their session is invalid.
+async function resolveSession(req) {
   const token = req.cookies && req.cookies.token;
   if (!token || typeof token !== 'string') return null;
 
@@ -36,7 +38,12 @@ async function resolveUser(req) {
   }
   // Logout bumps tokenVersion, revoking every token issued before it.
   if ((decoded.tv || 0) !== (user.tokenVersion || 0)) return null;
-  return user;
+  return { user, decoded };
+}
+
+async function resolveUser(req) {
+  const session = await resolveSession(req);
+  return session ? session.user : null;
 }
 
 async function requireAuth(req, res, next) {
@@ -109,5 +116,6 @@ module.exports = {
   deniedTenants,
   ingestTokenValid,
   allowIngestToken,
-  resolveUser
+  resolveUser,
+  resolveSession
 };
