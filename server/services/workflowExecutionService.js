@@ -75,6 +75,30 @@ async function applyStateEngine({ run, result, intents, telegramIntents = [], st
   await run.save();
 }
 
+// Copies the tenant's settings onto a run's context.meta.
+function applyTenantToMeta(meta, tenant) {
+  if (!meta.brandName && tenant?.name) {
+    meta.brandName = tenant.name;
+  }
+  // Report emails format `currency` cards/columns in the tenant's currency. Always
+  // taken from the tenant's current setting (never from the run's saved context),
+  // so a rerun of an older run picks up a currency changed since.
+  if (tenant?.settings?.currency) {
+    meta.currency = tenant.settings.currency;
+  }
+  // The tenant's Shopify store, which the inventory sales ranking (Redis) is keyed by. Taken from
+  // the tenant's current setting for the same reason as the currency.
+  if (tenant?.settings?.shopifyDomain) {
+    meta.shopifyDomain = tenant.settings.shopifyDomain;
+  } else {
+    delete meta.shopifyDomain;
+  }
+  if (!meta.emailBranding && tenant?.settings?.emailBranding) {
+    meta.emailBranding = { ...tenant.settings.emailBranding };
+  }
+  return meta;
+}
+
 async function executeRun({ run, runId }) {
   const targetRun = run || await WorkflowRun.findById(runId);
   if (!targetRun) {
@@ -84,18 +108,7 @@ async function executeRun({ run, runId }) {
   const nodeOutputs = [];
   const tenant = await Tenant.findOne({ tenantId: targetRun.tenantId }).lean();
   targetRun.context.meta = targetRun.context.meta || {};
-  if (!targetRun.context.meta.brandName && tenant?.name) {
-    targetRun.context.meta.brandName = tenant.name;
-  }
-  // Report emails format `currency` cards/columns in the tenant's currency. Always
-  // taken from the tenant's current setting (never from the run's saved context),
-  // so a rerun of an older run picks up a currency changed since.
-  if (tenant?.settings?.currency) {
-    targetRun.context.meta.currency = tenant.settings.currency;
-  }
-  if (!targetRun.context.meta.emailBranding && tenant?.settings?.emailBranding) {
-    targetRun.context.meta.emailBranding = { ...tenant.settings.emailBranding };
-  }
+  applyTenantToMeta(targetRun.context.meta, tenant);
   targetRun.markModified('context');
   const notificationMode = prepareNotificationMode(targetRun.definitionJson);
   const runner = new WorkflowRunner(targetRun.definitionJson, {
@@ -170,6 +183,7 @@ async function executeRun({ run, runId }) {
 module.exports = {
   resolveWorkflowVersion,
   executeRun,
+  applyTenantToMeta,
   prepareNotificationMode,
   applyStateEngine
 };

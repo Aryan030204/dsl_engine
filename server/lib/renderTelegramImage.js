@@ -432,6 +432,15 @@ async function renderTelegramImages({ title, message, insight, reportViewModel, 
       pageCount
     }));
   }
+  // A performance report with its optional inventory section: the inventory pages follow.
+  if (reportViewModel?.inventorySection) {
+    images.push(...await renderInventoryTelegramImages({
+      title,
+      reportViewModel: reportViewModel.inventorySection,
+      workflowName,
+      severity
+    }));
+  }
   return images;
 }
 

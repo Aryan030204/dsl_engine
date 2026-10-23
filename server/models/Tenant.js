@@ -9,6 +9,8 @@ const TenantSchema = new mongoose.Schema(
     settings: {
       currency: { type: String, default: 'USD' },
       timezone: { type: String, default: 'UTC' },
+      // The tenant's Shopify store (e.g. my-store.myshopify.com). Redis keys the sales ranking by it.
+      shopifyDomain: { type: String },
       emailBranding: {
         displayName: { type: String },
         logoUrl: { type: String },

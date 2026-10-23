@@ -1,6 +1,7 @@
 const queryBuilder = require('../sql/QueryBuilder');
 const queryExecutor = require('../sql/QueryExecutor');
 const { summarizeSkus } = require('../lib/inventorySkus');
+const redisSales = require('../lib/redisSales');
 const {
   buildDefaultBreakdownOutputKey,
   detectOutputKeyMode,
@@ -111,16 +112,24 @@ async function runInventoryBreakdown(def, context) {
     return { status: 'fail', reason: 'Inventory breakdown: healthy DOH threshold must be greater than critical threshold' };
   }
 
-  const querySpec = queryBuilder.buildInventoryProductQuery({
-    tenantId: context?.meta?.tenantId,
-    topK
-  });
-  const result = await queryExecutor.execute(querySpec);
-  if (!Array.isArray(result?.rows) || result.rows.length === 0) {
-    return { status: 'fail', reason: 'Inventory breakdown: no inventory rows were found for this brand' };
+  const tenantId = context?.meta?.tenantId;
+  const wantsSalesRanking = def.inventory_ranking === 'sales';
+
+  // Sales ranking: the top products by sales over the last 7 days come from Redis (gift-free);
+  // their stock / DRR / DOH still come from the inventory table. If the ranking can't be used,
+  // fall back to ranking by units sold so the report still goes out, and say why.
+  let salesRanking = null;
+  let fallbackReason = null;
+  if (wantsSalesRanking) {
+    try {
+      salesRanking = await redisSales.getTopProductSales(context?.meta?.shopifyDomain);
+    } catch (error) {
+      if (!(error instanceof redisSales.RedisSalesUnavailableError)) throw error;
+      fallbackReason = error.reason;
+    }
   }
 
-  const products = result.rows.map((row) => {
+  const mapRow = (row) => {
     const doh = row.doh_7d == null ? null : Number(row.doh_7d);
     return {
       product_id: String(row.product_id),
@@ -135,7 +144,47 @@ async function runInventoryBreakdown(def, context) {
           : doh < healthyThreshold ? 'Low stock' : 'Healthy',
       updated_at: row.updated_at
     };
-  });
+  };
+
+  let products = [];
+  let missingFromInventory = 0;
+  if (salesRanking) {
+    const ranked = salesRanking.products.slice(0, topK);
+    const result = await queryExecutor.execute(queryBuilder.buildInventoryProductQuery({
+      tenantId,
+      topK,
+      productIds: ranked.map((product) => product.product_id)
+    }));
+    const rowsById = new Map((result?.rows || []).map((row) => [String(row.product_id), row]));
+    ranked.forEach((rankedProduct) => {
+      const row = rowsById.get(rankedProduct.product_id);
+      if (!row) {
+        missingFromInventory += 1;
+        return;
+      }
+      products.push({
+        ...mapRow(row),
+        gross_sales: rankedProduct.sales,
+        sales_rank: products.length + 1
+      });
+    });
+    if (!products.length) {
+      salesRanking = null;
+      fallbackReason = 'none of the products ranked by sales are in the inventory table';
+    }
+  }
+
+  if (!salesRanking) {
+    if (fallbackReason) {
+      console.warn(`[inventory] sales ranking unavailable for ${tenantId}: ${fallbackReason}; ranking by units sold instead`);
+    }
+    const result = await queryExecutor.execute(queryBuilder.buildInventoryProductQuery({ tenantId, topK }));
+    if (!Array.isArray(result?.rows) || result.rows.length === 0) {
+      return { status: 'fail', reason: 'Inventory breakdown: no inventory rows were found for this brand' };
+    }
+    products = result.rows.map(mapRow);
+    missingFromInventory = 0;
+  }
   const critical = products.filter((product) => product.doh_7d != null && product.doh_7d <= criticalThreshold);
   const medium = products.filter((product) => product.doh_7d != null && product.doh_7d > criticalThreshold && product.doh_7d < healthyThreshold);
   const healthy = products.filter((product) => product.doh_7d != null && product.doh_7d >= healthyThreshold);
@@ -158,7 +207,15 @@ async function runInventoryBreakdown(def, context) {
     critical_threshold_days: criticalThreshold,
     healthy_threshold_days: healthyThreshold,
     report_top_k: reportTopK,
-    as_of: asOf?.toISOString() || null
+    as_of: asOf?.toISOString() || null,
+    ranking_source: salesRanking ? 'sales' : 'units',
+    ...(salesRanking ? {
+      sales_window_start: salesRanking.windowStart,
+      sales_window_end: salesRanking.windowEnd,
+      sales_updated_at: salesRanking.updatedAt,
+      missing_from_inventory: missingFromInventory
+    } : {}),
+    ...(fallbackReason ? { ranking_fallback_reason: fallbackReason } : {})
   };
 
   return {

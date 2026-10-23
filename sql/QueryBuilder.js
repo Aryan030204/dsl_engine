@@ -26,9 +26,15 @@ module.exports = {
     });
   },
 
-  buildInventoryProductQuery({ tenantId, topK = 50 }) {
+  // With `productIds` the query covers exactly those products (the caller already ranked them,
+  // e.g. by sales) and ignores the units ranking; without it, the top `topK` products by units sold.
+  buildInventoryProductQuery({ tenantId, topK = 50, productIds } = {}) {
     if (!tenantId) throw new Error('inventoryProductQuery: tenantId is required (db selector)');
     const safeTopK = Math.max(1, Math.min(100, Math.floor(Number(topK) || 50)));
+    const ids = Array.isArray(productIds)
+      ? [...new Set(productIds.map((id) => String(id).trim()).filter((id) => /^\d{1,20}$/.test(id)))].slice(0, 100)
+      : null;
+    if (ids && ids.length === 0) throw new Error('inventoryProductQuery: productIds has no valid product ids');
     return {
       // The table is one row per variant, and drr_7d / doh_7d are precomputed there, so they
       // are read, not recalculated. A product's DOH is its lowest stored variant DOH, but only
@@ -54,12 +60,13 @@ module.exports = {
           MIN(CASE WHEN p.drr_7d > 0 THEN p.doh_7d END) AS doh_7d,
           MAX(p.updated_at) AS updated_at
         FROM top_products_inventory p
+        ${ids ? 'WHERE p.product_id IN (?)' : ''}
         GROUP BY p.product_id
         ORDER BY SUM(p.sold_units_7d) DESC, p.product_id ASC
-        LIMIT ${safeTopK}
+        LIMIT ${ids ? ids.length : safeTopK}
       `,
-      params: [],
-      meta: { tenantId, type: 'inventory_product_breakdown', topK: safeTopK }
+      params: ids ? [ids] : [],
+      meta: { tenantId, type: 'inventory_product_breakdown', topK: ids ? ids.length : safeTopK }
     };
   }
 };

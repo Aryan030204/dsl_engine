@@ -21,17 +21,17 @@ function requireBinding(root, path) {
 // Money in the tenant's currency (Tenant.settings.currency, threaded onto
 // context.meta.currency by workflowExecutionService). Falls back to a plain number
 // when the code is missing or not a valid ISO currency.
-function formatCurrency(number, currency) {
+function formatCurrency(number, currency, { whole = false } = {}) {
   if (currency) {
     try {
       return new Intl.NumberFormat(currency === 'INR' ? 'en-IN' : 'en-US', {
-        style: 'currency', currency, minimumFractionDigits: 0, maximumFractionDigits: 2
+        style: 'currency', currency, minimumFractionDigits: 0, maximumFractionDigits: whole ? 0 : 2
       }).format(number);
     } catch {
       // invalid currency code: fall through to a plain number
     }
   }
-  return number.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+  return number.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: whole ? 0 : 2 });
 }
 
 // Like requireBinding, but a path that resolves to null/undefined returns null
@@ -43,7 +43,7 @@ function requirePresentBinding(root, path) {
 }
 
 function formatValue(value, format = 'text', { currency } = {}) {
-  if (format === 'text') return String(value ?? '');
+  if (format === 'text' || format === 'status') return String(value ?? '');
   const number = Number(value);
   if (!Number.isFinite(number)) throw new Error(`value is not numeric for format ${format}`);
   if (format === 'integer') return Math.round(number).toLocaleString('en-US');
@@ -52,6 +52,7 @@ function formatValue(value, format = 'text', { currency } = {}) {
   if (format === 'percent') return `${number.toFixed(2)}%`;
   if (format === 'delta_percent') return `${number > 0 ? '+' : ''}${number.toFixed(2)}%`;
   if (format === 'currency') return formatCurrency(number, currency);
+  if (format === 'currency_whole') return formatCurrency(number, currency, { whole: true });
   throw new Error(`unsupported value format: ${format}`);
 }
 
@@ -65,6 +66,34 @@ function formatDate(value, timezone) {
 
 function formatRange(range, timezone) {
   return `${formatDate(range.start, timezone)} – ${formatDate(range.end, timezone)}`;
+}
+
+// The inventory counts have fixed colors, whatever the card is labelled: Critical red, Low stock
+// orange, Healthy green. They are matched by the data path the card shows.
+const INVENTORY_KPI_COLORS = {
+  'metrics.inventory_critical_products': '#dc2626',
+  'metrics.inventory_medium_products': '#ea580c',
+  'metrics.inventory_healthy_products': '#059669'
+};
+
+// The status values the inventory breakdown produces. Only these are colored automatically.
+const INVENTORY_STATUSES = new Set(['critical', 'low stock', 'healthy', 'no recent sales']);
+function isInventoryStatus(value) {
+  return INVENTORY_STATUSES.has(String(value ?? '').trim().toLowerCase());
+}
+
+// Colours for a status value in a table (the "status" column format).
+function statusColors(value) {
+  const status = String(value ?? '').trim().toLowerCase();
+  if (status === 'critical') return { color: '#dc2626', background: '#fee2e2' };
+  if (status === 'low stock' || status === 'low') return { color: '#ea580c', background: '#ffedd5' };
+  if (status === 'healthy') return { color: '#059669', background: '#d1fae5' };
+  return { color: '#64748b', background: '#f1f5f9' };
+}
+
+function renderStatusChip(value) {
+  const { color, background } = statusColors(value);
+  return `<span style="display:inline-block;border-radius:16px;padding:4px 10px;background:${background};color:${color};font-weight:700;white-space:nowrap;">${escapeHtml(value)}</span>`;
 }
 
 function buildReportViewModel({ context, template, branding }) {
@@ -85,12 +114,14 @@ function buildReportViewModel({ context, template, branding }) {
     // orders) is legitimate data and renders as a dash instead of failing the run.
     const rawValue = requirePresentBinding(context, item.value);
     const rawChange = item.change ? requirePresentBinding(context, item.change) : null;
+    const color = INVENTORY_KPI_COLORS[item.value] || null;
     return {
       label: item.label,
       icon: item.icon || 'metric',
       value: rawValue == null ? '—' : formatValue(rawValue, item.format, { currency }),
       change: rawChange == null ? null : formatValue(rawChange, 'delta_percent'),
       changeValue: rawChange == null ? null : Number(rawChange),
+      ...(color ? { color } : {}),
     };
   });
 
@@ -105,10 +136,15 @@ function buildReportViewModel({ context, template, branding }) {
         rank: index + 1,
         cells: table.columns.map((column) => {
           const rawValue = requireBinding(entry, column.path);
+          const value = formatValue(rawValue, column.format, { currency });
+          // The inventory Status column is always shown as a colored chip, with no setting needed.
+          const format = column.format === 'text' && column.path === 'status' && isInventoryStatus(value)
+            ? 'status'
+            : column.format;
           return {
-            value: formatValue(rawValue, column.format, { currency }),
+            value,
             numericValue: column.format === 'delta_percent' ? Number(rawValue) : null,
-            format: column.format,
+            format,
           };
         })
       }))
@@ -210,9 +246,9 @@ function cardWidthPct(count) {
 function renderMetricCards(metrics, primaryColor) {
   const width = cardWidthPct(metrics.length);
   const cards = metrics.map((metric) => `<div class="rpt-kpi-card" style="display:inline-block;vertical-align:top;box-sizing:border-box;width:${width};padding:24px 10px;text-align:center;border-right:1px solid #e5e7eb;border-bottom:1px solid #e5e7eb;font-size:14px;">`
-    + `<div aria-hidden="true" style="font-size:22px;line-height:1;color:${primaryColor};">${iconGlyph(metric.icon)}</div>`
-    + `<div class="rpt-kpi-label" style="font-size:12px;font-weight:700;color:${primaryColor};text-transform:uppercase;letter-spacing:.04em;">${escapeHtml(metric.label)}</div>`
-    + `<div class="rpt-kpi-value" style="margin-top:12px;font-size:27px;font-weight:800;color:#111827;word-break:break-word;">${escapeHtml(metric.value)}</div>`
+    + `<div aria-hidden="true" style="font-size:22px;line-height:1;color:${metric.color || primaryColor};">${iconGlyph(metric.icon)}</div>`
+    + `<div class="rpt-kpi-label" style="font-size:12px;font-weight:700;color:${metric.color || primaryColor};text-transform:uppercase;letter-spacing:.04em;">${escapeHtml(metric.label)}</div>`
+    + `<div class="rpt-kpi-value" style="margin-top:12px;font-size:27px;font-weight:800;color:${metric.color || '#111827'};word-break:break-word;">${escapeHtml(metric.value)}</div>`
     + (metric.change == null ? '' : `<div class="rpt-kpi-change" style="margin-top:8px;font-size:15px;font-weight:700;color:${changeColor(metric.changeValue)};">${metric.changeValue > 0 ? '↑' : metric.changeValue < 0 ? '↓' : '—'} ${escapeHtml(metric.change)}</div>`)
     + '</div>').join('');
   return `<div class="rpt-kpis" style="font-size:0;border-top:1px solid #e5e7eb;border-left:1px solid #e5e7eb;border-radius:8px;overflow:hidden;">${cards}</div>`;
@@ -221,19 +257,25 @@ function renderMetricCards(metrics, primaryColor) {
 function renderTable(table, primaryColor) {
   const toneColor = table.tone === 'negative' ? '#ef2929' : table.tone === 'positive' ? primaryColor : '#374151';
   const header = [`<th class="rpt-th" align="left" style="padding:10px;width:36px;color:#4b5563;font-size:11px;">#</th>`, ...table.columns.map((column) => `<th class="rpt-th" align="left" style="padding:10px;color:#4b5563;font-size:11px;text-transform:uppercase;">${escapeHtml(column.label)}</th>`)].join('');
-  const rows = table.rows.length ? table.rows.map((row) => `<tr style="border-top:1px solid #e5e7eb;"><td class="rpt-td" style="padding:13px 10px;"><span class="rpt-rank" style="display:inline-block;width:25px;height:25px;line-height:25px;text-align:center;border-radius:3px;background:${toneColor};color:#fff;font-weight:700;">${row.rank}</span></td>${row.cells.map((cell) => `<td class="rpt-td" style="padding:13px 10px;font-size:14px;color:${cell.format === 'delta_percent' ? changeColor(cell.numericValue) : '#111827'};font-weight:${cell.format === 'delta_percent' ? '700' : '500'};${cell.format === 'text' ? 'word-break:break-word;' : 'white-space:nowrap;'}">${cell.format === 'delta_percent' ? (cell.numericValue > 0 ? '↑ ' : cell.numericValue < 0 ? '↓ ' : '— ') : ''}${escapeHtml(cell.value)}</td>`).join('')}</tr>`).join('') : `<tr style="border-top:1px solid #e5e7eb;"><td colspan="${table.columns.length + 1}" align="center" style="padding:22px;color:#6b7280;font-size:13px;">No data available</td></tr>`;
+  const rows = table.rows.length ? table.rows.map((row) => `<tr style="border-top:1px solid #e5e7eb;"><td class="rpt-td" style="padding:13px 10px;"><span class="rpt-rank" style="display:inline-block;width:25px;height:25px;line-height:25px;text-align:center;border-radius:3px;background:${toneColor};color:#fff;font-weight:700;">${row.rank}</span></td>${row.cells.map((cell) => `<td class="rpt-td" style="padding:13px 10px;font-size:14px;color:${cell.format === 'delta_percent' ? changeColor(cell.numericValue) : '#111827'};font-weight:${cell.format === 'delta_percent' ? '700' : '500'};${cell.format === 'text' ? 'word-break:break-word;' : 'white-space:nowrap;'}">${cell.format === 'status' ? renderStatusChip(cell.value) : `${cell.format === 'delta_percent' ? (cell.numericValue > 0 ? '↑ ' : cell.numericValue < 0 ? '↓ ' : '— ') : ''}${escapeHtml(cell.value)}`}</td>`).join('')}</tr>`).join('') : `<tr style="border-top:1px solid #e5e7eb;"><td colspan="${table.columns.length + 1}" align="center" style="padding:22px;color:#6b7280;font-size:13px;">No data available</td></tr>`;
   return `<div class="rpt-panel" style="margin-top:20px;border:1px solid #e5e7eb;border-radius:8px;padding:20px;"><div class="rpt-panel-title" style="font-size:16px;font-weight:800;color:${toneColor};text-transform:uppercase;">${escapeHtml(table.title)}</div><table role="table" width="100%" cellpadding="0" cellspacing="0" style="margin-top:14px;border-collapse:collapse;"><thead><tr>${header}</tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
-function renderInventoryReportEmail({ context, template, branding, subject }) {
+// Section rules shared by the inventory email and the optional inventory block of the
+// performance report. They only apply at <= 600px, in clients that honour <style> queries.
+const INVENTORY_SECTION_RULES = `
+      .inventory-section { padding:12px !important; margin-top:12px !important; }
+      .inventory-card-cell { display:inline-block !important; width:47% !important; box-sizing:border-box !important; vertical-align:top !important; padding:8px !important; }
+      .inventory-desktop-table { display:none !important; max-height:0 !important; overflow:hidden !important; }
+      .inventory-mobile-product { display:block !important; }`;
+
+// The inventory report's content blocks (overview cards + lowest-DOH table), without the page
+// wrapper, so they can sit in the inventory email or below a performance report.
+function buildInventorySection({ context, template, brand }) {
   const report = context?.scratch?.inventoryReport;
   if (!report || !Array.isArray(report.products)) {
     throw new Error('missing inventory report data at scratch.inventoryReport');
   }
-  const brand = resolveEmailBranding({
-    displayName: context?.meta?.brandName,
-    ...(context?.meta?.emailBranding || {})
-  }, branding);
   const timezone = context?.meta?.timezone || 'UTC';
   const reportTopK = Number(report.report_top_k) || report.lowest_doh_products.length || 2;
   const selectedWindowEnd = context?.meta?.window?.end;
@@ -289,29 +331,9 @@ function renderInventoryReportEmail({ context, template, branding, subject }) {
   const notes = report.no_velocity_count > 0
     ? `<div style="margin-top:14px;padding:12px 15px;border-radius:8px;background:#f3f4f6;color:#4b5563;font-size:13px;">${report.no_velocity_count} product(s) have no 7-day sales velocity and are excluded from DOH status counts.</div>`
     : '';
-  const html = `<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="color-scheme" content="light only"><style>
-    @media only screen and (max-width:600px) {
-      .inventory-email-body { padding:8px !important; }
-      .inventory-email-shell { width:100% !important; max-width:100% !important; padding:14px !important; border-radius:8px !important; }
-      .inventory-header { padding:14px !important; }
-      .inventory-brand-cell, .inventory-date-cell { display:block !important; width:100% !important; text-align:left !important; }
-      .inventory-date-cell { padding-top:12px !important; }
-      .inventory-title { font-size:24px !important; }
-      .inventory-section { padding:12px !important; margin-top:12px !important; }
-      .inventory-card-cell { display:inline-block !important; width:47% !important; box-sizing:border-box !important; vertical-align:top !important; padding:8px !important; }
-      .inventory-desktop-table { display:none !important; max-height:0 !important; overflow:hidden !important; }
-      .inventory-mobile-product { display:block !important; }
-    }
-  </style></head><body class="inventory-email-body" style="margin:0;padding:20px;background:#f4f7f5;font-family:Arial,sans-serif;color:#111827;"><div class="inventory-email-shell" style="width:100%;max-width:760px;box-sizing:border-box;margin:0 auto;background:#fff;padding:24px;border:1px solid #e5e7eb;border-radius:14px;">
-    <table role="presentation" class="inventory-header" width="100%" cellpadding="0" cellspacing="0" style="background:#effaf4;border-radius:12px;padding:20px;"><tr><td class="inventory-brand-cell"><div style="font-size:21px;font-weight:900;letter-spacing:.16em;color:#111827;">${escapeHtml(brand.displayName.toUpperCase())}</div></td><td class="inventory-date-cell" align="right"><div style="font-size:12px;color:#4b5563;text-transform:uppercase;">Inventory as of</div><div style="font-size:19px;font-weight:800;color:${brand.primaryColor};">${escapeHtml(asOf)}</div></td></tr>
-      <tr><td colspan="2" align="center" style="padding-top:20px;"><span style="display:inline-block;padding:7px 14px;border-radius:18px;background:#d1fae5;color:#047857;font-size:12px;font-weight:800;text-transform:uppercase;">${escapeHtml(template.eyebrow || 'Inventory Alert')}</span><div style="margin-top:12px;font-size:32px;line-height:1.15;font-weight:900;color:#111827;">${escapeHtml(template.title || 'Top Products Inventory Report')}</div><div style="margin-top:8px;font-size:15px;color:#5b6475;">${escapeHtml(template.description || `Inventory health of the top ${report.analyzed_count} products, ranked by 7-day sales.`)}</div></td></tr></table>
-    <div class="inventory-section" style="margin-top:16px;border:1px solid #e5e7eb;border-radius:10px;padding:18px;"><div style="font-size:22px;font-weight:900;">Inventory Overview</div><div style="margin:6px 0 16px;color:#5b6475;">Inventory health of the top ${report.analyzed_count} products, ranked by 7-day sales.</div><table role="presentation" width="100%" cellpadding="6" cellspacing="6"><tr>${cards.map(([label, value, color, bg]) => `<td class="inventory-card-cell" width="25%" valign="top" style="padding:15px;border-radius:10px;background:${bg};"><div style="font-size:13px;font-weight:700;">${escapeHtml(label)}</div><div style="margin-top:12px;font-size:32px;font-weight:900;color:${color};">${escapeHtml(value)}</div></td>`).join('')}</tr></table><div style="margin-top:10px;padding:12px 14px;background:#f3f6fa;border-radius:8px;color:#4b5563;font-size:12px;">Status counts are calculated across the selected products using the configured DOH thresholds.</div>${notes}</div>
-    <div class="inventory-section" style="margin-top:16px;border:1px solid #e5e7eb;border-radius:10px;padding:18px;"><div style="font-size:22px;font-weight:900;">Top ${escapeHtml(reportTopK)} Products with Lowest DOH</div><div style="margin:6px 0 16px;color:#5b6475;">The products with the fewest estimated days of inventory among the top sellers.</div><table class="inventory-desktop-table" role="table" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;"><thead><tr style="background:#f3f4f6;"><th align="left" style="padding:11px;">#</th><th align="left" style="padding:11px;">Product</th><th align="left" style="padding:11px;">SKU</th><th align="right" style="padding:11px;">DRR (7 days)</th><th align="right" style="padding:11px;">DOH (7 days)</th><th align="center" style="padding:11px;">Status</th></tr></thead><tbody>${rows}</tbody></table>${mobileProductCards}</div>
-    <table role="presentation" width="100%" style="margin-top:24px;border-collapse:collapse;"><tr><td align="right" style="font-size:12px;color:#6b7280;">${escapeHtml(brand.footerText)}</td></tr></table>
-  </div></body></html>`;
-  const text = [
-    brand.displayName,
-    template.title || 'Top Products Inventory Report',
+  const sectionsHtml = `    <div class="inventory-section" style="margin-top:16px;border:1px solid #e5e7eb;border-radius:10px;padding:18px;"><div style="font-size:22px;font-weight:900;">Inventory Overview</div><div style="margin:6px 0 16px;color:#5b6475;">Inventory health of the top ${report.analyzed_count} products, ranked by 7-day sales.</div><table role="presentation" width="100%" cellpadding="6" cellspacing="6"><tr>${cards.map(([label, value, color, bg]) => `<td class="inventory-card-cell" width="25%" valign="top" style="padding:15px;border-radius:10px;background:${bg};"><div style="font-size:13px;font-weight:700;">${escapeHtml(label)}</div><div style="margin-top:12px;font-size:32px;font-weight:900;color:${color};">${escapeHtml(value)}</div></td>`).join('')}</tr></table><div style="margin-top:10px;padding:12px 14px;background:#f3f6fa;border-radius:8px;color:#4b5563;font-size:12px;">Status counts are calculated across the selected products using the configured DOH thresholds.</div>${notes}</div>
+    <div class="inventory-section" style="margin-top:16px;border:1px solid #e5e7eb;border-radius:10px;padding:18px;"><div style="font-size:22px;font-weight:900;">Top ${escapeHtml(reportTopK)} Products with Lowest DOH</div><div style="margin:6px 0 16px;color:#5b6475;">The products with the fewest estimated days of inventory among the top sellers.</div><table class="inventory-desktop-table" role="table" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;"><thead><tr style="background:#f3f4f6;"><th align="left" style="padding:11px;">#</th><th align="left" style="padding:11px;">Product</th><th align="left" style="padding:11px;">SKU</th><th align="right" style="padding:11px;">DRR (7 days)</th><th align="right" style="padding:11px;">DOH (7 days)</th><th align="center" style="padding:11px;">Status</th></tr></thead><tbody>${rows}</tbody></table>${mobileProductCards}</div>`;
+  const textLines = [
     `Inventory as of ${asOf}`,
     `Products analysed: ${report.analyzed_count}`,
     `Critical (≤${report.critical_threshold_days} DOH): ${report.critical_count}`,
@@ -319,9 +341,8 @@ function renderInventoryReportEmail({ context, template, branding, subject }) {
     `Healthy (≥${report.healthy_threshold_days} DOH): ${report.healthy_count}`,
     '',
     'Top products with lowest DOH:',
-    ...report.lowest_doh_products.map((product, index) => `${index + 1}. ${product.product_title} | SKU ${product.sku} | DRR ${Number(product.drr_7d || 0).toFixed(2)} | DOH ${product.doh_7d == null ? '—' : Number(product.doh_7d).toFixed(2)} | ${product.status}`),
-    brand.footerText
-  ].join('\n');
+    ...report.lowest_doh_products.map((product, index) => `${index + 1}. ${product.product_title} | SKU ${product.sku} | DRR ${Number(product.drr_7d || 0).toFixed(2)} | DOH ${product.doh_7d == null ? '—' : Number(product.doh_7d).toFixed(2)} | ${product.status}`)
+  ];
   const inventoryRows = report.lowest_doh_products.map((product, index) => ({
     rank: index + 1,
     cells: [product.product_title, product.sku, Number(product.drr_7d || 0).toFixed(2),
@@ -329,9 +350,9 @@ function renderInventoryReportEmail({ context, template, branding, subject }) {
       .map((value) => ({ value: String(value ?? ''), format: 'text', numericValue: null }))
   }));
   return {
-    subject,
-    html,
-    text,
+    asOf,
+    sectionsHtml,
+    textLines,
     viewModel: {
       inventory: report,
       asOf,
@@ -348,16 +369,59 @@ function renderInventoryReportEmail({ context, template, branding, subject }) {
   };
 }
 
+function renderInventoryReportEmail({ context, template, branding, subject }) {
+  const brand = resolveEmailBranding({
+    displayName: context?.meta?.brandName,
+    ...(context?.meta?.emailBranding || {})
+  }, branding);
+  const section = buildInventorySection({ context, template, brand });
+  const html = `<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="color-scheme" content="light only"><style>
+    @media only screen and (max-width:600px) {
+      .inventory-email-body { padding:8px !important; }
+      .inventory-email-shell { width:100% !important; max-width:100% !important; padding:14px !important; border-radius:8px !important; }
+      .inventory-header { padding:14px !important; }
+      .inventory-brand-cell, .inventory-date-cell { display:block !important; width:100% !important; text-align:left !important; }
+      .inventory-date-cell { padding-top:12px !important; }
+      .inventory-title { font-size:24px !important; }${INVENTORY_SECTION_RULES}
+    }
+  </style></head><body class="inventory-email-body" style="margin:0;padding:20px;background:#f4f7f5;font-family:Arial,sans-serif;color:#111827;"><div class="inventory-email-shell" style="width:100%;max-width:760px;box-sizing:border-box;margin:0 auto;background:#fff;padding:24px;border:1px solid #e5e7eb;border-radius:14px;">
+    <table role="presentation" class="inventory-header" width="100%" cellpadding="0" cellspacing="0" style="background:#effaf4;border-radius:12px;padding:20px;"><tr><td class="inventory-brand-cell"><div style="font-size:21px;font-weight:900;letter-spacing:.16em;color:#111827;">${escapeHtml(brand.displayName.toUpperCase())}</div></td><td class="inventory-date-cell" align="right"><div style="font-size:12px;color:#4b5563;text-transform:uppercase;">Inventory as of</div><div style="font-size:19px;font-weight:800;color:${brand.primaryColor};">${escapeHtml(section.asOf)}</div></td></tr>
+      <tr><td colspan="2" align="center" style="padding-top:20px;"><span style="display:inline-block;padding:7px 14px;border-radius:18px;background:#d1fae5;color:#047857;font-size:12px;font-weight:800;text-transform:uppercase;">${escapeHtml(template.eyebrow || 'Inventory Alert')}</span><div style="margin-top:12px;font-size:32px;line-height:1.15;font-weight:900;color:#111827;">${escapeHtml(template.title || 'Top Products Inventory Report')}</div><div style="margin-top:8px;font-size:15px;color:#5b6475;">${escapeHtml(template.description || `Inventory health of the top ${section.viewModel.inventory.analyzed_count} products, ranked by 7-day sales.`)}</div></td></tr></table>
+${section.sectionsHtml}
+    <table role="presentation" width="100%" style="margin-top:24px;border-collapse:collapse;"><tr><td align="right" style="font-size:12px;color:#6b7280;">${escapeHtml(brand.footerText)}</td></tr></table>
+  </div></body></html>`;
+  const text = [
+    brand.displayName,
+    template.title || 'Top Products Inventory Report',
+    ...section.textLines,
+    brand.footerText
+  ].join('\n');
+  return { subject, html, text, viewModel: section.viewModel };
+}
+
 function renderReportEmail({ context, template, branding, subject }) {
   if (template?.preset === 'inventory_alert_v1') {
     return renderInventoryReportEmail({ context, template, branding, subject });
   }
+  if (template?.preset === 'dashboard_report_v1') {
+    // required here, not at the top: the dashboard layout reuses helpers exported by this file
+    return require('./renderDashboardEmail').renderDashboardReportEmail({ context, template, branding, subject });
+  }
   const view = buildReportViewModel({ context, template, branding });
   const brand = view.branding;
+  // Optional (template.includeInventory): the inventory report below the performance report,
+  // in the same email. It needs an inventory breakdown to have run earlier in the workflow.
+  const inventory = template.includeInventory === true
+    ? buildInventorySection({ context, template: {}, brand })
+    : null;
+  const inventoryBlock = inventory
+    ? `<div style="margin-top:34px;padding-top:24px;border-top:1px solid #e5e7eb;"><div style="font-size:15px;font-weight:800;text-transform:uppercase;color:${brand.primaryColor};">Inventory report</div><div style="margin-top:4px;font-size:13px;color:#4b5563;">Inventory as of ${escapeHtml(inventory.asOf)}</div></div>\n${inventory.sectionsHtml}`
+    : '';
+  const inventoryStyles = inventory ? `\n@media only screen and (max-width: 600px) {${INVENTORY_SECTION_RULES}\n}\n` : '';
   const logo = brand.logoUrl
     ? `<img src="${escapeHtml(brand.logoUrl)}" alt="${escapeHtml(brand.displayName)}" style="max-height:42px;max-width:190px;display:block;">`
     : `<div class="rpt-brand" style="font-size:24px;font-weight:900;letter-spacing:.22em;color:#111827;">${escapeHtml(brand.displayName.toUpperCase())}</div>`;
-  const html = `<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light only"><style>${REPORT_STYLES}</style></head><body style="margin:0;padding:0;background:#f4f5f3;font-family:Arial,sans-serif;color:#111827;"><div class="rpt-wrap" style="max-width:760px;margin:0 auto;background:#fff;padding:30px;">
+  const html = `<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light only"><style>${REPORT_STYLES}${inventoryStyles}</style></head><body style="margin:0;padding:0;background:#f4f5f3;font-family:Arial,sans-serif;color:#111827;"><div class="rpt-wrap" style="max-width:760px;margin:0 auto;background:#fff;padding:30px;">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td class="rpt-head-cell">${logo}<div style="margin-top:5px;color:${brand.primaryColor};font-size:11px;font-weight:700;letter-spacing:.12em;">${escapeHtml(brand.tagline.toUpperCase())}</div></td><td class="rpt-head-cell rpt-head-date" align="right"><div style="font-size:13px;color:#4b5563;text-transform:uppercase;">Daily Report</div><div style="font-size:19px;font-weight:800;color:${brand.primaryColor};">${escapeHtml(view.currentDate)}</div><div style="font-size:12px;color:#4b5563;">vs ${escapeHtml(view.comparisonDate)}</div></td></tr></table>
     <div class="rpt-divider" style="height:1px;background:#e5e7eb;margin:22px -30px 28px;"></div>
     <div style="font-size:15px;font-weight:800;text-transform:uppercase;color:${brand.primaryColor};">${escapeHtml(view.eyebrow)}</div>
@@ -366,7 +430,7 @@ function renderReportEmail({ context, template, branding, subject }) {
     ${renderMetricCards(view.metrics, brand.primaryColor)}
     ${renderInsight(view.insight, brand.primaryColor)}
     ${view.tables.map((table) => renderTable(table, brand.primaryColor)).join('')}
-    <div style="margin-top:22px;padding:15px;border:1px solid #e5e7eb;border-radius:8px;font-size:12px;color:#4b5563;">Comparisons use ${escapeHtml(view.comparisonRange)} in ${escapeHtml(view.timezone)}.</div>
+    <div style="margin-top:22px;padding:15px;border:1px solid #e5e7eb;border-radius:8px;font-size:12px;color:#4b5563;">Comparisons use ${escapeHtml(view.comparisonRange)} in ${escapeHtml(view.timezone)}.</div>${inventoryBlock}
     <table role="presentation" width="100%" style="margin-top:26px;border-collapse:collapse;"><tr><td style="font-weight:800;letter-spacing:.15em;">${escapeHtml(brand.displayName.toUpperCase())}</td><td align="right" style="font-size:12px;color:#6b7280;">${escapeHtml(brand.footerText)}</td></tr></table>
   </div></body></html>`;
 
@@ -381,11 +445,14 @@ function renderReportEmail({ context, template, branding, subject }) {
     ...view.metrics.map((metric) => `${metric.label}: ${metric.value}${metric.change == null ? '' : ` (${metric.change})`}`),
     ...(view.insight ? ['', `Key takeaway: ${view.insight.summary}`] : []),
     ...view.tables.flatMap((table) => ['', table.title, ...(table.rows.length ? table.rows.map((row) => `${row.rank}. ${row.cells.map((cell, index) => `${table.columns[index].label}: ${cell.value}`).join(' | ')}`) : ['No data available'])]),
+    ...(inventory ? ['', 'Inventory report', ...inventory.textLines] : []),
     '',
     brand.footerText,
   ].filter((line) => line !== undefined && line !== null).join('\n');
 
-  return { subject, html, text, viewModel: view };
+  // The inventory view model goes under its own key: renderTelegramImage.js treats a top-level
+  // `inventory` as an inventory-only report.
+  return { subject, html, text, viewModel: inventory ? { ...view, inventorySection: inventory.viewModel } : view };
 }
 
-module.exports = { renderReportEmail, buildReportViewModel, formatValue };
+module.exports = { renderReportEmail, buildReportViewModel, formatValue, escapeHtml, requireBinding, requirePresentBinding };

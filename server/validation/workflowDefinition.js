@@ -38,11 +38,12 @@ const { WORKFLOW_PURPOSES } = require('../lib/stateEngine/defaults');
 const { hasNotificationTarget } = require('../lib/renderStateEmail');
 
 const EMAIL_FORMATS = new Set(['insight', 'report']);
-const REPORT_PRESETS = new Set(['performance_report_v1', 'inventory_alert_v1']);
-const REPORT_VALUE_FORMATS = new Set(['text', 'integer', 'decimal', 'percent_ratio', 'percent', 'delta_percent', 'currency']);
+const REPORT_PRESETS = new Set(['performance_report_v1', 'inventory_alert_v1', 'dashboard_report_v1']);
+const REPORT_VALUE_FORMATS = new Set(['text', 'integer', 'decimal', 'percent_ratio', 'percent', 'delta_percent', 'currency', 'currency_whole', 'status']);
+// the dashboard layout also has a share bar column (a row's share of a total)
+const DASHBOARD_COLUMN_FORMATS = new Set([...REPORT_VALUE_FORMATS, 'share_bar']);
 const REPORT_TONES = new Set(['positive', 'negative', 'neutral']);
 const REPORT_ICONS = new Set(['metric', 'sessions', 'orders', 'conversion', 'trend', 'sales', 'aov', 'cart']);
-const MAX_REPORT_METRICS = 6;
 
 function validateBindingPath(value, label, errors) {
   if (!isSafeBindingPath(value)) errors.push(`${label} must be a safe dot-separated context path`);
@@ -81,6 +82,104 @@ function validateEmailNode(node, errors) {
   validateEmailTemplate(node, prefix, errors);
 }
 
+// The dashboard layout (dashboard_report_v1): hero + strip KPI cards, tables with an optional share bar
+// column, and an optional inventory block. KPI cards have no upper limit.
+function validateDashboardTemplate(node, prefix, errors) {
+  const template = node.template;
+  if (template.headerLabel !== undefined && (typeof template.headerLabel !== 'string' || template.headerLabel.trim() === '')) {
+    errors.push(`${prefix} template.headerLabel must be a non-empty string`);
+  }
+  if (template.heroCount !== undefined && (!Number.isInteger(template.heroCount) || template.heroCount < 0 || template.heroCount > 3)) {
+    errors.push(`${prefix} template.heroCount must be an integer from 0 to 3`);
+  }
+  if (!template.period || typeof template.period !== 'object' || Array.isArray(template.period)) {
+    errors.push(`${prefix} template.period must be an object`);
+  }
+  rejectUnknownFields(template.period, new Set(['current', 'comparison']), `${prefix} template.period`, errors);
+  validateBindingPath(template.period?.current, `${prefix} template.period.current`, errors);
+  validateBindingPath(template.period?.comparison, `${prefix} template.period.comparison`, errors);
+
+  const metrics = template.metrics === undefined ? [] : template.metrics;
+  if (!Array.isArray(metrics)) {
+    errors.push(`${prefix} template.metrics must be an array`);
+  } else {
+    metrics.forEach((metric, index) => {
+      const label = `${prefix} metric ${index + 1}`;
+      if (!metric || typeof metric !== 'object' || Array.isArray(metric)) {
+        errors.push(`${label} must be an object`);
+        return;
+      }
+      if (typeof metric.label !== 'string' || metric.label.trim() === '') errors.push(`${label} label is required`);
+      validateBindingPath(metric.value, `${label} value`, errors);
+      if (metric.change !== undefined) validateBindingPath(metric.change, `${label} change`, errors);
+      if (!REPORT_VALUE_FORMATS.has(metric.format)) errors.push(`${label} has unsupported format`);
+      if (metric.icon !== undefined && !REPORT_ICONS.has(metric.icon)) errors.push(`${label} has unsupported icon`);
+      rejectUnknownFields(metric, new Set(['label', 'value', 'change', 'format', 'icon']), label, errors);
+    });
+  }
+
+  const tables = template.tables === undefined ? [] : template.tables;
+  if (!Array.isArray(tables) || tables.length > 4) {
+    errors.push(`${prefix} template.tables must be an array of at most four tables`);
+  } else {
+    tables.forEach((table, tableIndex) => {
+      const label = `${prefix} table ${tableIndex + 1}`;
+      if (!table || typeof table !== 'object' || Array.isArray(table)) {
+        errors.push(`${label} must be an object`);
+        return;
+      }
+      if (typeof table.title !== 'string' || table.title.trim() === '') errors.push(`${label} title is required`);
+      validateBindingPath(table.source, `${label} source`, errors);
+      if (!REPORT_TONES.has(table.tone || 'neutral')) errors.push(`${label} has unsupported tone`);
+      if (!Number.isInteger(table.limit) || table.limit < 1 || table.limit > 100) errors.push(`${label} limit must be an integer from 1 to 100`);
+      if (!Array.isArray(table.columns) || table.columns.length < 1) {
+        errors.push(`${label} must contain at least one column`);
+      } else {
+        table.columns.forEach((column, columnIndex) => {
+          const columnLabel = `${label} column ${columnIndex + 1}`;
+          if (!column || typeof column !== 'object' || Array.isArray(column)) {
+            errors.push(`${columnLabel} must be an object`);
+            return;
+          }
+          if (typeof column.label !== 'string' || column.label.trim() === '') errors.push(`${columnLabel} label is required`);
+          validateBindingPath(column.path, `${columnLabel} path`, errors);
+          if (!DASHBOARD_COLUMN_FORMATS.has(column.format)) errors.push(`${columnLabel} has unsupported format`);
+          if (column.format === 'share_bar') {
+            validateBindingPath(column.of, `${columnLabel} of (the total the share is taken of)`, errors);
+          } else if (column.of !== undefined) {
+            errors.push(`${columnLabel} "of" is only for the share_bar format`);
+          }
+          rejectUnknownFields(column, new Set(['label', 'path', 'format', 'of']), columnLabel, errors);
+        });
+      }
+      rejectUnknownFields(table, new Set(['title', 'source', 'tone', 'limit', 'columns']), label, errors);
+    });
+  }
+
+  if (template.inventory !== undefined) {
+    const inventory = template.inventory;
+    if (!inventory || typeof inventory !== 'object' || Array.isArray(inventory)) {
+      errors.push(`${prefix} template.inventory must be an object`);
+    } else {
+      if (typeof inventory.enabled !== 'boolean') errors.push(`${prefix} template.inventory.enabled must be true or false`);
+      ['title', 'listTitle'].forEach((field) => {
+        if (inventory[field] !== undefined && (typeof inventory[field] !== 'string' || inventory[field].trim() === '')) {
+          errors.push(`${prefix} template.inventory.${field} must be a non-empty string`);
+        }
+      });
+      rejectUnknownFields(inventory, new Set(['enabled', 'title', 'listTitle']), `${prefix} template.inventory`, errors);
+    }
+  }
+
+  if (Array.isArray(metrics) && Array.isArray(tables) && metrics.length === 0 && tables.length === 0 && template.inventory?.enabled !== true) {
+    errors.push(`${prefix} template must show something: add a KPI card, a table or the inventory block`);
+  }
+  const allowed = new Set(['preset', 'headerLabel', 'heroCount', 'period', 'metrics', 'tables', 'inventory']);
+  Object.keys(template).filter((key) => !allowed.has(key)).forEach((key) => {
+    errors.push(`${prefix} dashboard template contains unsupported field ${key}`);
+  });
+}
+
 // Shared by email and messaging nodes: both render through renderEmail, so an
 // insight or report template must pass the same checks whichever node carries it.
 function validateEmailTemplate(node, prefix, errors) {
@@ -97,6 +196,10 @@ function validateEmailTemplate(node, prefix, errors) {
   if (node.format !== 'report') return;
 
   if (!REPORT_PRESETS.has(node.template.preset)) errors.push(`${prefix} has unsupported report preset`);
+  if (node.template.preset === 'dashboard_report_v1') {
+    validateDashboardTemplate(node, prefix, errors);
+    return;
+  }
   ['eyebrow', 'title'].forEach((field) => {
     if (typeof node.template[field] !== 'string' || node.template[field].trim() === '') {
       errors.push(`${prefix} template.${field} is required`);
@@ -116,8 +219,8 @@ function validateEmailTemplate(node, prefix, errors) {
   validateBindingPath(node.template.period?.current, `${prefix} template.period.current`, errors);
   validateBindingPath(node.template.period?.comparison, `${prefix} template.period.comparison`, errors);
 
-  if (!Array.isArray(node.template.metrics) || node.template.metrics.length < 1 || node.template.metrics.length > MAX_REPORT_METRICS) {
-    errors.push(`${prefix} template.metrics must contain one to ${MAX_REPORT_METRICS} items`);
+  if (!Array.isArray(node.template.metrics) || node.template.metrics.length < 1) {
+    errors.push(`${prefix} template.metrics must contain at least one item`);
   } else {
     node.template.metrics.forEach((metric, index) => {
       const label = `${prefix} metric ${index + 1}`;
@@ -168,7 +271,10 @@ function validateEmailTemplate(node, prefix, errors) {
   if (node.template.insightSource !== undefined) {
     validateBindingPath(node.template.insightSource, `${prefix} template.insightSource`, errors);
   }
-  const allowed = new Set(['preset', 'eyebrow', 'title', 'description', 'period', 'metrics', 'insightSource', 'tables']);
+  if (node.template.includeInventory !== undefined && typeof node.template.includeInventory !== 'boolean') {
+    errors.push(`${prefix} template.includeInventory must be true or false`);
+  }
+  const allowed = new Set(['preset', 'eyebrow', 'title', 'description', 'period', 'metrics', 'insightSource', 'tables', 'includeInventory']);
   Object.keys(node.template).filter((key) => !allowed.has(key)).forEach((key) => {
     errors.push(`${prefix} report template contains unsupported field ${key}`);
   });
@@ -325,6 +431,75 @@ function validateStateConfig(definition, errors) {
       });
     }
   }
+}
+
+const DEFAULT_INVENTORY_OUTPUT_KEY = 'inventory_top_products';
+
+// Where a node can send the run next: its next pointer, a branch's rule and default targets, and
+// a composite's steps (which run inside it).
+function successorIds(node) {
+  const ids = [];
+  if (node?.next) ids.push(node.next);
+  (Array.isArray(node?.rules) ? node.rules : []).forEach((rule) => { if (rule?.then) ids.push(rule.then); });
+  if (node?.default?.then) ids.push(node.default.then);
+  if (Array.isArray(node?.steps)) ids.push(...node.steps);
+  return ids;
+}
+
+// A report reads inventory data when it includes the inventory section, shows an inventory KPI
+// (metrics.inventory_*), or lists a product table from an inventory breakdown node's output.
+function reportReadsInventoryData(node, inventoryOutputKeys) {
+  const template = node.template || {};
+  if (template.includeInventory === true) return true;
+  if (template.inventory?.enabled === true) return true;
+  const paths = (Array.isArray(template.metrics) ? template.metrics : [])
+    .flatMap((metric) => [metric?.value, metric?.change])
+    .filter((path) => typeof path === 'string');
+  if (paths.some((path) => path.startsWith('metrics.inventory_'))) return true;
+  const sources = new Set();
+  [...inventoryOutputKeys, DEFAULT_INVENTORY_OUTPUT_KEY].forEach((key) => {
+    sources.add(`breakdowns.${key}`);
+    sources.add(`breakdowns.${key}_lowest_doh`);
+  });
+  return (Array.isArray(template.tables) ? template.tables : []).some((table) => sources.has(table?.source));
+}
+
+// Inventory numbers only exist once an inventory-mode breakdown node has run, so a report that
+// uses them must exist in the workflow and come after that node.
+function getInventoryDataErrors(definition) {
+  const nodes = Array.isArray(definition?.nodes) ? definition.nodes.filter(Boolean) : [];
+  const inventoryNodes = nodes.filter((node) => node.analysis_mode === 'inventory');
+  const inventoryOutputKeys = inventoryNodes.map((node) => (
+    typeof node.output_key === 'string' && node.output_key.trim() ? node.output_key.trim() : DEFAULT_INVENTORY_OUTPUT_KEY
+  ));
+  const byId = new Map(nodes.map((node) => [node.id, node]));
+
+  // Everything the run can reach after an inventory node. A node that is only a step of a
+  // composite runs when the composite does, so the composite counts as a starting point too.
+  const reachable = new Set();
+  const queue = [];
+  inventoryNodes.forEach((node) => {
+    queue.push(node.id);
+    nodes.filter((other) => Array.isArray(other.steps) && other.steps.includes(node.id)).forEach((other) => queue.push(other.id));
+  });
+  while (queue.length) {
+    const id = queue.shift();
+    if (reachable.has(id)) continue;
+    reachable.add(id);
+    successorIds(byId.get(id)).forEach((nextId) => { if (byId.has(nextId)) queue.push(nextId); });
+  }
+
+  const errors = [];
+  nodes.forEach((node) => {
+    if ((node.type !== 'email' && node.type !== 'messaging') || node.format !== 'report') return;
+    if (!reportReadsInventoryData(node, inventoryOutputKeys)) return;
+    if (!inventoryNodes.length) {
+      errors.push(`${node.type} node ${node.id} uses inventory data but the workflow has no inventory breakdown node`);
+    } else if (!reachable.has(node.id)) {
+      errors.push(`${node.type} node ${node.id} uses inventory data but runs before the inventory breakdown node. Connect it after that node.`);
+    }
+  });
+  return errors;
 }
 
 function validateWorkflowDefinition(definition) {
@@ -501,6 +676,9 @@ function validateWorkflowDefinition(definition) {
         if (node.output_key !== undefined && (typeof node.output_key !== 'string' || !node.output_key.trim())) {
           errors.push(`inventory breakdown node ${node.id} has invalid output_key`);
         }
+        if (node.inventory_ranking !== undefined && !['sales', 'units'].includes(node.inventory_ranking)) {
+          errors.push(`inventory breakdown node ${node.id} inventory_ranking must be "sales" or "units"`);
+        }
         continue;
       }
       if (node.base_metrics !== undefined) {
@@ -656,6 +834,8 @@ function validateWorkflowDefinition(definition) {
       validateMessagingNode(node, errors);
     }
   }
+
+  errors.push(...getInventoryDataErrors(definition));
 
   errors.push(...getPartialDayProductCompatibilityErrors(definition));
   errors.push(...getPartialDayLandingPagePathCompatibilityErrors(definition));

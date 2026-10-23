@@ -4,6 +4,15 @@ import SuggestionInput from '../SuggestionInput';
 import { INSIGHT_BASE_TOKENS } from '../../constants/insightTokens';
 import { getNodePartialDayProductWarnings } from '../../utils/workflowValidation';
 import api from '../../api/client';
+import {
+  MAX_REPORT_TABLES,
+  KPI_PATH_SUGGESTIONS,
+  addInventoryKpiCards,
+  buildLowestDohTable,
+  createDashboardTemplate,
+  DASHBOARD_SHARE_TOTAL_PATH,
+  buildTableSourceSuggestions,
+} from '../../utils/reportTemplates';
 
 // Generate unique ID for rules
 const generateRuleId = () => `rule_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
@@ -61,7 +70,7 @@ const BREAKDOWN_INPUT_SCOPE_OPTIONS = [
   { value: 'breakdown', label: 'From Breakdown' }
 ];
 
-const EMAIL_VALUE_FORMATS = ['text', 'integer', 'decimal', 'percent_ratio', 'percent', 'delta_percent', 'currency'];
+const EMAIL_VALUE_FORMATS = ['text', 'integer', 'decimal', 'percent_ratio', 'percent', 'delta_percent', 'currency', 'currency_whole', 'status'];
 const EMAIL_TABLE_TONES = ['positive', 'negative', 'neutral'];
 const EMAIL_METRIC_ICONS = ['metric', 'sessions', 'orders', 'conversion', 'trend', 'sales', 'aov', 'cart'];
 
@@ -274,6 +283,9 @@ function MetricMultiSelect({ value, onChange, placeholder }) {
       <div className="text-[10px] text-gray-400">
         Supported: {COMPARE_METRIC_OPTIONS.join(', ')}
       </div>
+      <div className="text-[10px] text-gray-400">
+        Inventory counts (critical, low stock, healthy) are not metrics here. They come from a Dimension Breakdown node set to &ldquo;Inventory coverage&rdquo;.
+      </div>
     </div>
   );
 }
@@ -464,6 +476,7 @@ export default function PropertiesPanel({
   onAttachWorkflowToRule,
   isAttachingWorkflow = false,
   breakdownOutputKeySuggestions = [],
+  inventoryOutputKeys = [],
 }) {
   const [data, setData] = useState(selectedNode?.data || {});
   const [ruleWorkflowSelections, setRuleWorkflowSelections] = useState({});
@@ -711,6 +724,8 @@ export default function PropertiesPanel({
                           title: 'Top Products Inventory Report',
                           description: 'Inventory health of the top 50 products, ranked by 7-day sales.'
                         });
+                      } else if (preset === 'dashboard_report_v1') {
+                        handleChange('template', createDashboardTemplate());
                       } else {
                         handleChange('template', createDefaultReportTemplate());
                       }
@@ -719,11 +734,14 @@ export default function PropertiesPanel({
                   >
                     <option value="performance_report_v1">Performance report</option>
                     <option value="inventory_alert_v1">Inventory alert</option>
+                    <option value="dashboard_report_v1">Daily dashboard report</option>
                   </select>
                 </div>
                 <div className="space-y-2 pt-3 border-t">
                   <div className="text-xs font-semibold text-gray-700">Report Copy</div>
-                  {['eyebrow', 'title', 'description'].map((field) => (
+                  {reportTemplate.preset === 'dashboard_report_v1' ? (
+                    <input value={reportTemplate.headerLabel || ''} onChange={(e) => updateReportTemplate('headerLabel', e.target.value)} placeholder="Header label (e.g. Daily Report)" className="w-full border p-2 rounded text-sm" />
+                  ) : ['eyebrow', 'title', 'description'].map((field) => (
                     <input key={field} value={reportTemplate[field] || ''} onChange={(e) => updateReportTemplate(field, e.target.value)} placeholder={field} className="w-full border p-2 rounded text-sm" />
                   ))}
                   {reportTemplate.preset !== 'inventory_alert_v1' && <>
@@ -732,7 +750,7 @@ export default function PropertiesPanel({
                   </>}
                 </div>
 
-                <div className="space-y-2 pt-3 border-t">
+                {reportTemplate.preset !== 'dashboard_report_v1' && <div className="space-y-2 pt-3 border-t">
                   <label className="flex items-center gap-2 text-xs font-semibold text-gray-700">
                     <input
                       type="checkbox"
@@ -754,26 +772,60 @@ export default function PropertiesPanel({
                       <div className="text-[10px] text-gray-400">Shows the insight node's summary under the metric cards. Place this email after the insight node.</div>
                     </>
                   )}
-                </div>
+                </div>}
 
-                <div className="space-y-3 pt-3 border-t">
-                  <div className="flex justify-between items-center"><span className="text-xs font-semibold text-gray-700">Metric Cards</span><button type="button" disabled={(reportTemplate.metrics || []).length >= 6} onClick={() => updateReportTemplate('metrics', [...(reportTemplate.metrics || []), { label: 'Metric', value: 'metrics.current_sessions', change: 'metrics.sessions_delta_pct', format: 'integer', icon: 'metric' }])} className="text-xs text-blue-600 disabled:text-gray-300"><Plus className="inline w-3 h-3" /> Add</button></div>
+                {reportTemplate.preset !== 'inventory_alert_v1' && reportTemplate.preset !== 'dashboard_report_v1' && (
+                  <div className="space-y-2 pt-3 border-t">
+                    <label className="flex items-center gap-2 text-xs font-semibold text-gray-700">
+                      <input
+                        type="checkbox"
+                        checked={reportTemplate.includeInventory === true}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            updateReportTemplate('includeInventory', true);
+                          } else {
+                            const { includeInventory, ...rest } = reportTemplate;
+                            handleChange('template', rest);
+                          }
+                        }}
+                      />
+                      Include inventory report below
+                    </label>
+                    {reportTemplate.includeInventory === true && (
+                      <div className="text-[10px] text-gray-400">Adds the inventory overview and lowest-DOH table under this report, in the same email. The workflow needs a Dimension Breakdown node in &ldquo;Inventory coverage&rdquo; mode that runs before this one.</div>
+                    )}
+                  </div>
+                )}
+
+                {reportTemplate.preset !== 'inventory_alert_v1' && <div className="space-y-3 pt-3 border-t">
+                  <div className="flex justify-between items-center"><span className="text-xs font-semibold text-gray-700">Metric Cards</span><div className="flex items-center gap-3">{reportTemplate.preset !== 'dashboard_report_v1' && <button type="button" title="Adds the Critical, Low stock and Healthy product counts from an inventory breakdown node. They always show in red, orange and green. Edit or remove them like any card." disabled={addInventoryKpiCards(reportTemplate.metrics || []).added === 0} onClick={() => updateReportTemplate('metrics', addInventoryKpiCards(reportTemplate.metrics || []).metrics)} className="text-xs text-blue-600 disabled:text-gray-300"><Plus className="inline w-3 h-3" /> Inventory KPIs</button>}<button type="button" onClick={() => updateReportTemplate('metrics', [...(reportTemplate.metrics || []), { label: 'Metric', value: 'metrics.current_sessions', change: 'metrics.sessions_delta_pct', format: 'integer', icon: 'metric' }])} className="text-xs text-blue-600 disabled:text-gray-300"><Plus className="inline w-3 h-3" /> Add</button></div></div>
+                  <div className="text-[10px] text-gray-400">Add as many cards as you need. Every label, data path, format and icon is editable. Inventory cards read an Inventory coverage node, so this node must come after it.</div>
+                  <datalist id="report-kpi-paths">{KPI_PATH_SUGGESTIONS.map((path) => <option key={path} value={path} />)}</datalist>
+                  {reportTemplate.preset === 'dashboard_report_v1' && (
+                    <div className="flex items-center gap-2 text-xs text-gray-600">
+                      <span>Large hero cards</span>
+                      <input type="number" min="0" max="3" value={reportTemplate.heroCount ?? 2} onChange={(e) => updateReportTemplate('heroCount', Math.max(0, Math.min(3, Math.floor(Number(e.target.value) || 0))))} className="w-14 border p-1 rounded text-xs" />
+                      <span className="text-[10px] text-gray-400">The first cards are shown large; the rest go in the strip below them.</span>
+                    </div>
+                  )}
                   {(reportTemplate.metrics || []).map((metric, index) => (
                     <div key={index} className="border rounded p-2 space-y-2 bg-gray-50">
                       <div className="flex gap-2"><input value={metric.label || ''} onChange={(e) => updateMetric(index, 'label', e.target.value)} placeholder="Label" className="min-w-0 flex-1 border p-1 rounded text-xs" /><button type="button" disabled={(reportTemplate.metrics || []).length <= 1} onClick={() => updateReportTemplate('metrics', reportTemplate.metrics.filter((_, idx) => idx !== index))} className="text-red-500 disabled:text-gray-300"><Trash2 className="w-4 h-4" /></button></div>
-                      <input value={metric.value || ''} onChange={(e) => updateMetric(index, 'value', e.target.value)} placeholder="Value context path" className="w-full border p-1 rounded text-xs font-mono" />
-                      <input value={metric.change || ''} onChange={(e) => updateMetric(index, 'change', e.target.value || undefined)} placeholder="Change context path (optional)" className="w-full border p-1 rounded text-xs font-mono" />
+                      <input list="report-kpi-paths" value={metric.value || ''} onChange={(e) => updateMetric(index, 'value', e.target.value)} placeholder="Value context path" className="w-full border p-1 rounded text-xs font-mono" />
+                      <input list="report-kpi-paths" value={metric.change || ''} onChange={(e) => updateMetric(index, 'change', e.target.value || undefined)} placeholder="Change context path (optional)" className="w-full border p-1 rounded text-xs font-mono" />
                       <div className="flex gap-2"><select value={metric.format || 'text'} onChange={(e) => updateMetric(index, 'format', e.target.value)} className="min-w-0 flex-1 border p-1 rounded text-xs bg-white">{EMAIL_VALUE_FORMATS.map((format) => <option key={format}>{format}</option>)}</select><select value={metric.icon || 'metric'} onChange={(e) => updateMetric(index, 'icon', e.target.value)} className="min-w-0 flex-1 border p-1 rounded text-xs bg-white">{EMAIL_METRIC_ICONS.map((icon) => <option key={icon}>{icon}</option>)}</select></div>
                     </div>
                   ))}
                 </div>}
 
                 {reportTemplate.preset !== 'inventory_alert_v1' && <div className="space-y-3 pt-3 border-t">
-                  <div className="flex justify-between items-center"><span className="text-xs font-semibold text-gray-700">Report Tables</span><button type="button" disabled={(reportTemplate.tables || []).length >= 4} onClick={() => updateReportTemplate('tables', [...(reportTemplate.tables || []), { title: 'Table', source: 'breakdowns.output_key', tone: 'neutral', limit: 3, columns: [{ label: 'Name', path: 'display_value', format: 'text' }] }])} className="text-xs text-blue-600 disabled:text-gray-300"><Plus className="inline w-3 h-3" /> Add</button></div>
+                  <div className="flex justify-between items-center"><span className="text-xs font-semibold text-gray-700">Report Tables</span><div className="flex items-center gap-3">{reportTemplate.preset !== 'dashboard_report_v1' && <button type="button" title="Adds the lowest-DOH products table from the workflow's inventory breakdown node. Edit or remove it like any table." disabled={(reportTemplate.tables || []).length >= MAX_REPORT_TABLES} onClick={() => updateReportTemplate('tables', [...(reportTemplate.tables || []), buildLowestDohTable(inventoryOutputKeys[0])])} className="text-xs text-blue-600 disabled:text-gray-300"><Plus className="inline w-3 h-3" /> Lowest-DOH table</button>}<button type="button" disabled={(reportTemplate.tables || []).length >= MAX_REPORT_TABLES} onClick={() => updateReportTemplate('tables', [...(reportTemplate.tables || []), { title: 'Table', source: 'breakdowns.output_key', tone: 'neutral', limit: 3, columns: [{ label: 'Name', path: 'display_value', format: 'text' }] }])} className="text-xs text-blue-600 disabled:text-gray-300"><Plus className="inline w-3 h-3" /> Add</button></div></div>
+                  <div className="text-[10px] text-gray-400">Up to {MAX_REPORT_TABLES} tables. Titles, data source, tone, row limit and columns are all editable.</div>
+                  <datalist id="report-table-sources">{buildTableSourceSuggestions(breakdownOutputKeySuggestions, inventoryOutputKeys).map((source) => <option key={source} value={source} />)}</datalist>
                   {(reportTemplate.tables || []).map((table, tableIndex) => (
                     <div key={tableIndex} className="border rounded p-2 space-y-2 bg-gray-50">
                       <div className="flex gap-2"><input value={table.title || ''} onChange={(e) => updateTable(tableIndex, 'title', e.target.value)} placeholder="Table title" className="min-w-0 flex-1 border p-1 rounded text-xs" /><button type="button" disabled={(reportTemplate.tables || []).length <= 1} onClick={() => updateReportTemplate('tables', reportTemplate.tables.filter((_, idx) => idx !== tableIndex))} className="text-red-500 disabled:text-gray-300"><Trash2 className="w-4 h-4" /></button></div>
-                      <input value={table.source || ''} onChange={(e) => updateTable(tableIndex, 'source', e.target.value)} placeholder="Array context path" className="w-full border p-1 rounded text-xs font-mono" />
+                      <input list="report-table-sources" value={table.source || ''} onChange={(e) => updateTable(tableIndex, 'source', e.target.value)} placeholder="Array context path" className="w-full border p-1 rounded text-xs font-mono" />
                       <div className="flex gap-2"><select value={table.tone || 'neutral'} onChange={(e) => updateTable(tableIndex, 'tone', e.target.value)} className="min-w-0 flex-1 border p-1 rounded text-xs bg-white">{EMAIL_TABLE_TONES.map((tone) => <option key={tone}>{tone}</option>)}</select><input type="number" min="1" max="100" value={table.limit || 1} onChange={(e) => updateTable(tableIndex, 'limit', Number(e.target.value))} className="w-16 border p-1 rounded text-xs" /></div>
                       <div className="text-[10px] font-semibold text-gray-500">Columns</div>
                       {(table.columns || []).map((column, columnIndex) => (
@@ -781,13 +833,34 @@ export default function PropertiesPanel({
                           <input value={column.label || ''} onChange={(e) => updateColumn(tableIndex, columnIndex, 'label', e.target.value)} placeholder="Label" className="min-w-0 border p-1 rounded text-[10px]" />
                           <input value={column.path || ''} onChange={(e) => updateColumn(tableIndex, columnIndex, 'path', e.target.value)} placeholder="Row path" className="min-w-0 border p-1 rounded text-[10px] font-mono" />
                           <button type="button" disabled={(table.columns || []).length <= 1} onClick={() => updateTable(tableIndex, 'columns', table.columns.filter((_, idx) => idx !== columnIndex))} className="text-red-500 disabled:text-gray-300"><Trash2 className="w-3 h-3" /></button>
-                          <select value={column.format || 'text'} onChange={(e) => updateColumn(tableIndex, columnIndex, 'format', e.target.value)} className="col-span-2 border p-1 rounded text-[10px] bg-white">{EMAIL_VALUE_FORMATS.map((format) => <option key={format}>{format}</option>)}</select>
+                          <select value={column.format || 'text'} onChange={(e) => updateTable(tableIndex, 'columns', table.columns.map((col, idx) => (idx !== columnIndex ? col : { ...col, format: e.target.value, of: e.target.value === 'share_bar' ? (col.of || DASHBOARD_SHARE_TOTAL_PATH) : undefined })))} className="col-span-2 border p-1 rounded text-[10px] bg-white">{(reportTemplate.preset === 'dashboard_report_v1' ? [...EMAIL_VALUE_FORMATS, 'share_bar'] : EMAIL_VALUE_FORMATS).map((format) => <option key={format}>{format}</option>)}</select>
+                          {column.format === 'share_bar' && <input list="report-kpi-paths" value={column.of || ''} onChange={(e) => updateColumn(tableIndex, columnIndex, 'of', e.target.value)} placeholder="Total the share is taken of, e.g. metrics.current_sessions" className="col-span-3 min-w-0 border p-1 rounded text-[10px] font-mono" />}
                         </div>
                       ))}
                       <button type="button" onClick={() => updateTable(tableIndex, 'columns', [...(table.columns || []), { label: 'Value', path: 'value', format: 'text' }])} className="text-[10px] text-blue-600"><Plus className="inline w-3 h-3" /> Add column</button>
                     </div>
                   ))}
                 </div>}
+
+                {reportTemplate.preset === 'dashboard_report_v1' && (
+                  <div className="space-y-2 pt-3 border-t">
+                    <label className="flex items-center gap-2 text-xs font-semibold text-gray-700">
+                      <input
+                        type="checkbox"
+                        checked={reportTemplate.inventory?.enabled === true}
+                        onChange={(e) => updateReportTemplate('inventory', { ...(reportTemplate.inventory || {}), enabled: e.target.checked })}
+                      />
+                      Show inventory health block
+                    </label>
+                    {reportTemplate.inventory?.enabled === true && (
+                      <>
+                        <input value={reportTemplate.inventory?.title || ''} onChange={(e) => updateReportTemplate('inventory', { ...reportTemplate.inventory, title: e.target.value || undefined })} placeholder="Block title (Inventory health)" className="w-full border p-2 rounded text-sm" />
+                        <input value={reportTemplate.inventory?.listTitle || ''} onChange={(e) => updateReportTemplate('inventory', { ...reportTemplate.inventory, listTitle: e.target.value || undefined })} placeholder="List title (Act first · lowest days on hand)" className="w-full border p-2 rounded text-sm" />
+                        <div className="text-[10px] text-gray-400">Shows the product count, the red / orange / green bar and the lowest-DOH products with their DRR and DOH. The workflow needs a Dimension Breakdown node in &ldquo;Inventory coverage&rdquo; mode that runs before this one.</div>
+                      </>
+                    )}
+                  </div>
+                )}
               </>
             ) : (
               <div className="pt-3 border-t">
@@ -1511,7 +1584,8 @@ export default function PropertiesPanel({
                      </div>
                      {data.analysis_mode === 'inventory' ? (
                        <div className="space-y-3 rounded border border-emerald-200 bg-emerald-50 p-3">
-                         <p className="text-xs text-emerald-900">Ranks products by stored 7-day sales, sums variant stock and sales, and uses the lowest stored variant DOH as the product’s risk level.</p>
+                         <p className="text-xs text-emerald-900">Ranks products, sums variant stock and sales, and uses the lowest stored variant DOH as the product’s risk level.</p>
+                         <div><label className="block text-xs font-medium text-gray-600 mb-1">Rank top products by</label><select value={data.inventory_ranking || 'units'} onChange={(e) => handleChange('inventory_ranking', e.target.value)} className="w-full border p-2 rounded text-sm bg-white"><option value="sales">Sales, last 7 days (from Redis)</option><option value="units">Units sold, last 7 days (from the database)</option></select><p className="mt-1 text-xs text-gray-500">Sales ranking needs the tenant's Shopify store set in Settings, and covers at most the top 20 products. If it can't be read, the report falls back to units sold.</p></div>
                          <div><label className="block text-xs font-medium text-gray-600 mb-1">Top products to analyze</label><input type="number" min="1" max="100" value={data.inventory_top_k ?? 50} onChange={(e) => handleChange('inventory_top_k', Number(e.target.value))} className="w-full border p-2 rounded text-sm" /></div>
                          <div><label className="block text-xs font-medium text-gray-600 mb-1">Lowest-DOH products to show in report</label><input type="number" min="1" max="100" value={data.inventory_report_top_k ?? 2} onChange={(e) => handleChange('inventory_report_top_k', Number(e.target.value))} className="w-full border p-2 rounded text-sm" /><p className="mt-1 text-xs text-gray-500">Shows this many analyzed products, ordered from lowest DOH upward.</p></div>
                          <div><label className="block text-xs font-medium text-gray-600 mb-1">Critical at or below (DOH days)</label><input type="number" min="0" step="0.5" value={data.critical_doh_days ?? 7} onChange={(e) => handleChange('critical_doh_days', Number(e.target.value))} className="w-full border p-2 rounded text-sm" /></div>
