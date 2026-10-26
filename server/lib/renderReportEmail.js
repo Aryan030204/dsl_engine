@@ -1,5 +1,6 @@
 const { resolveBinding } = require('./emailBindings');
 const { resolveEmailBranding } = require('./emailBranding');
+const { hasReportCopyField } = require('./reportCopy');
 
 function escapeHtml(value) {
   return String(value ?? '')
@@ -103,11 +104,14 @@ function buildReportViewModel({ context, template, branding }) {
     throw new Error(`unsupported report preset: ${template?.preset || 'missing'}`);
   }
   const timezone = context?.meta?.timezone || 'UTC';
-  const currentPeriod = requireBinding(context, template.period.current);
-  const comparisonPeriod = requireBinding(context, template.period.comparison);
-  if (!currentPeriod?.start || !currentPeriod?.end || !comparisonPeriod?.start || !comparisonPeriod?.end) {
-    throw new Error('report period bindings must resolve to start/end objects');
-  }
+  const currentPeriod = hasReportCopyField(template, 'period.current') && template.period?.current
+    ? requireBinding(context, template.period.current)
+    : null;
+  const comparisonPeriod = hasReportCopyField(template, 'period.comparison') && template.period?.comparison
+    ? requireBinding(context, template.period.comparison)
+    : null;
+  if (currentPeriod && (!currentPeriod.start || !currentPeriod.end)) throw new Error('current report period binding must resolve to a start/end object');
+  if (comparisonPeriod && (!comparisonPeriod.start || !comparisonPeriod.end)) throw new Error('comparison report period binding must resolve to a start/end object');
 
   const currency = context?.meta?.currency;
   const metrics = (template.metrics || []).map((item) => {
@@ -168,16 +172,16 @@ function buildReportViewModel({ context, template, branding }) {
       displayName: context?.meta?.brandName,
       ...(context?.meta?.emailBranding || {}),
     }, branding),
-    eyebrow: template.eyebrow,
-    title: template.title,
-    description: template.description || '',
+    eyebrow: hasReportCopyField(template, 'eyebrow') ? String(template.eyebrow || '').trim() : '',
+    title: hasReportCopyField(template, 'title') ? String(template.title || '').trim() : '',
+    description: hasReportCopyField(template, 'description') ? String(template.description || '').trim() : '',
     timezone,
     currentPeriod,
     comparisonPeriod,
-    currentDate: formatDate(currentPeriod.start, timezone),
-    comparisonDate: formatDate(comparisonPeriod.start, timezone),
-    currentRange: formatRange(currentPeriod, timezone),
-    comparisonRange: formatRange(comparisonPeriod, timezone),
+    currentDate: currentPeriod ? formatDate(currentPeriod.start, timezone) : null,
+    comparisonDate: comparisonPeriod ? formatDate(comparisonPeriod.start, timezone) : null,
+    currentRange: currentPeriod ? formatRange(currentPeriod, timezone) : null,
+    comparisonRange: comparisonPeriod ? formatRange(comparisonPeriod, timezone) : null,
     metrics,
     insight,
     tables,
@@ -371,9 +375,9 @@ function buildInventorySection({ context, template, brand }) {
       inventory: report,
       asOf,
       branding: brand,
-      eyebrow: template.eyebrow || 'Inventory Alert',
-      title: template.title || 'Top Products Inventory Report',
-      description: template.description || '',
+      eyebrow: hasReportCopyField(template, 'eyebrow') ? String(template.eyebrow || '').trim() : '',
+      title: hasReportCopyField(template, 'title') ? String(template.title || '').trim() : '',
+      description: hasReportCopyField(template, 'description') ? String(template.description || '').trim() : '',
       tables: [{
         title: `Top ${reportTopK} Products with Lowest DOH`,
         columns: ['Product', 'SKU', 'Current Inventory', 'DRR (7 days)', 'DOH (7 days)', 'Status'].map((label) => ({ label })),
@@ -389,6 +393,11 @@ function renderInventoryReportEmail({ context, template, branding, subject }) {
     ...(context?.meta?.emailBranding || {})
   }, branding);
   const section = buildInventorySection({ context, template, brand });
+  const copy = [
+    section.viewModel.eyebrow ? `<span style="display:inline-block;padding:7px 14px;border-radius:18px;background:#d1fae5;color:#047857;font-size:12px;font-weight:800;text-transform:uppercase;">${escapeHtml(section.viewModel.eyebrow)}</span>` : '',
+    section.viewModel.title ? `<div style="margin-top:12px;font-size:32px;line-height:1.15;font-weight:900;color:#111827;">${escapeHtml(section.viewModel.title)}</div>` : '',
+    section.viewModel.description ? `<div style="margin-top:8px;font-size:15px;color:#5b6475;">${escapeHtml(section.viewModel.description)}</div>` : ''
+  ].filter(Boolean).join('');
   const html = `<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="color-scheme" content="light only"><style>
     @media only screen and (max-width:600px) {
       .inventory-email-body { padding:8px !important; }
@@ -400,13 +409,13 @@ function renderInventoryReportEmail({ context, template, branding, subject }) {
     }
   </style></head><body class="inventory-email-body" style="margin:0;padding:20px;background:#f4f7f5;font-family:Arial,sans-serif;color:#111827;"><div class="inventory-email-shell" style="width:100%;max-width:760px;box-sizing:border-box;margin:0 auto;background:#fff;padding:24px;border:1px solid #e5e7eb;border-radius:14px;">
     <table role="presentation" class="inventory-header" width="100%" cellpadding="0" cellspacing="0" style="background:#effaf4;border-radius:12px;padding:20px;"><tr><td class="inventory-brand-cell"><div style="font-size:21px;font-weight:900;letter-spacing:.16em;color:#111827;">${escapeHtml(brand.displayName.toUpperCase())}</div></td><td class="inventory-date-cell" align="right"><div style="font-size:12px;color:#4b5563;text-transform:uppercase;">Inventory as of</div><div style="font-size:19px;font-weight:800;color:${brand.primaryColor};">${escapeHtml(section.asOf)}</div></td></tr>
-      <tr><td colspan="2" align="center" style="padding-top:20px;"><span style="display:inline-block;padding:7px 14px;border-radius:18px;background:#d1fae5;color:#047857;font-size:12px;font-weight:800;text-transform:uppercase;">${escapeHtml(template.eyebrow || 'Inventory Alert')}</span><div style="margin-top:12px;font-size:32px;line-height:1.15;font-weight:900;color:#111827;">${escapeHtml(template.title || 'Top Products Inventory Report')}</div><div style="margin-top:8px;font-size:15px;color:#5b6475;">${escapeHtml(template.description || `Inventory health of the top ${section.viewModel.inventory.analyzed_count} products, ranked by 7-day sales.`)}</div></td></tr></table>
+      ${copy ? `<tr><td colspan="2" align="center" style="padding-top:20px;">${copy}</td></tr>` : ''}</table>
 ${section.sectionsHtml}
     <table role="presentation" width="100%" style="margin-top:24px;border-collapse:collapse;"><tr><td align="right" style="font-size:12px;color:#6b7280;">${escapeHtml(brand.footerText)}</td></tr></table>
   </div></body></html>`;
   const text = [
     brand.displayName,
-    template.title || 'Top Products Inventory Report',
+    section.viewModel.title,
     ...section.textLines,
     brand.footerText
   ].join('\n');
@@ -436,25 +445,22 @@ function renderReportEmail({ context, template, branding, subject }) {
     ? `<img src="${escapeHtml(brand.logoUrl)}" alt="${escapeHtml(brand.displayName)}" style="max-height:42px;max-width:190px;display:block;">`
     : `<div class="rpt-brand" style="font-size:24px;font-weight:900;letter-spacing:.22em;color:#111827;">${escapeHtml(brand.displayName.toUpperCase())}</div>`;
   const html = `<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light only"><style>${REPORT_STYLES}${inventoryStyles}</style></head><body style="margin:0;padding:0;background:#f4f5f3;font-family:Arial,sans-serif;color:#111827;"><div class="rpt-wrap" style="max-width:760px;margin:0 auto;background:#fff;padding:30px;">
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td class="rpt-head-cell">${logo}<div style="margin-top:5px;color:${brand.primaryColor};font-size:11px;font-weight:700;letter-spacing:.12em;">${escapeHtml(brand.tagline.toUpperCase())}</div></td><td class="rpt-head-cell rpt-head-date" align="right"><div style="font-size:13px;color:#4b5563;text-transform:uppercase;">Daily Report</div><div style="font-size:19px;font-weight:800;color:${brand.primaryColor};">${escapeHtml(view.currentDate)}</div><div style="font-size:12px;color:#4b5563;">vs ${escapeHtml(view.comparisonDate)}</div></td></tr></table>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td class="rpt-head-cell">${logo}</td><td class="rpt-head-cell rpt-head-date" align="right">${view.currentDate ? `<div style="font-size:19px;font-weight:800;color:${brand.primaryColor};">${escapeHtml(view.currentDate)}</div>` : ''}${view.comparisonDate ? `<div style="font-size:12px;color:#4b5563;">vs ${escapeHtml(view.comparisonDate)}</div>` : ''}</td></tr></table>
     <div class="rpt-divider" style="height:1px;background:#e5e7eb;margin:22px -30px 28px;"></div>
-    <div style="font-size:15px;font-weight:800;text-transform:uppercase;color:${brand.primaryColor};">${escapeHtml(view.eyebrow)}</div>
-    <div class="rpt-title" style="margin-top:12px;font-size:38px;line-height:1.08;font-weight:900;color:#050505;">${escapeHtml(view.title)}</div>
-    ${view.description ? `<div class="rpt-desc" style="margin:16px 0 26px;font-size:16px;line-height:1.5;color:#5b5b5b;">${escapeHtml(view.description)}</div>` : '<div style="height:24px;"></div>'}
+    ${view.eyebrow ? `<div style="font-size:15px;font-weight:800;text-transform:uppercase;color:${brand.primaryColor};">${escapeHtml(view.eyebrow)}</div>` : ''}
+    ${view.title ? `<div class="rpt-title" style="margin-top:12px;font-size:38px;line-height:1.08;font-weight:900;color:#050505;">${escapeHtml(view.title)}</div>` : ''}
+    ${view.description ? `<div class="rpt-desc" style="margin:16px 0 26px;font-size:16px;line-height:1.5;color:#5b5b5b;">${escapeHtml(view.description)}</div>` : ''}
     ${renderMetricCards(view.metrics, brand.primaryColor)}
     ${renderInsight(view.insight, brand.primaryColor)}
     ${view.tables.map((table) => renderTable(table, brand.primaryColor)).join('')}
-    <div style="margin-top:22px;padding:15px;border:1px solid #e5e7eb;border-radius:8px;font-size:12px;color:#4b5563;">Comparisons use ${escapeHtml(view.comparisonRange)} in ${escapeHtml(view.timezone)}.</div>${inventoryBlock}
+    ${inventoryBlock}
     <table role="presentation" width="100%" style="margin-top:26px;border-collapse:collapse;"><tr><td style="font-weight:800;letter-spacing:.15em;">${escapeHtml(brand.displayName.toUpperCase())}</td><td align="right" style="font-size:12px;color:#6b7280;">${escapeHtml(brand.footerText)}</td></tr></table>
   </div></body></html>`;
 
   const text = [
     brand.displayName,
-    brand.tagline,
-    `${view.eyebrow}: ${view.title}`,
     view.description,
-    `Current period: ${view.currentRange} (${view.timezone})`,
-    `Comparison period: ${view.comparisonRange} (${view.timezone})`,
+    view.currentRange ? `Current period: ${view.currentRange} (${view.timezone})` : '',
     '',
     ...view.metrics.map((metric) => `${metric.label}: ${metric.value}${metric.change == null ? '' : ` (${metric.change})`}`),
     ...(view.insight ? ['', `Key takeaway: ${view.insight.summary}`] : []),

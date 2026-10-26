@@ -79,6 +79,32 @@ const { hasNotificationTarget } = require('../lib/renderStateEmail');
 
 const EMAIL_FORMATS = new Set(['insight', 'report']);
 const REPORT_PRESETS = new Set(['performance_report_v1', 'inventory_alert_v1', 'dashboard_report_v1']);
+const REPORT_COPY_FIELDS = {
+  performance_report_v1: new Set(['eyebrow', 'title', 'description', 'period.current', 'period.comparison']),
+  inventory_alert_v1: new Set(['eyebrow', 'title', 'description']),
+  dashboard_report_v1: new Set(['headerLabel', 'period.current', 'period.comparison'])
+};
+
+function validateReportCopyConfig(template, preset, prefix, errors) {
+  if (template.includeReportCopy !== undefined && typeof template.includeReportCopy !== 'boolean') {
+    errors.push(`${prefix} template.includeReportCopy must be true or false`);
+  }
+  if (template.reportCopyFields === undefined) return;
+  const allowedFields = REPORT_COPY_FIELDS[preset] || new Set();
+  if (!Array.isArray(template.reportCopyFields)) {
+    errors.push(`${prefix} template.reportCopyFields must be an array`);
+    return;
+  }
+  const seen = new Set();
+  template.reportCopyFields.forEach((field) => {
+    if (typeof field !== 'string' || !allowedFields.has(field)) {
+      errors.push(`${prefix} template.reportCopyFields contains unsupported field ${String(field)}`);
+    } else if (seen.has(field)) {
+      errors.push(`${prefix} template.reportCopyFields contains duplicate field ${field}`);
+    }
+    seen.add(field);
+  });
+}
 const REPORT_VALUE_FORMATS = new Set(['text', 'integer', 'decimal', 'percent_ratio', 'percent', 'delta_percent', 'currency', 'currency_whole', 'status']);
 // the dashboard layout also has a share bar column (a row's share of a total)
 const DASHBOARD_COLUMN_FORMATS = new Set([...REPORT_VALUE_FORMATS, 'share_bar']);
@@ -126,18 +152,18 @@ function validateEmailNode(node, errors) {
 // column, and an optional inventory block. KPI cards have no upper limit.
 function validateDashboardTemplate(node, prefix, errors) {
   const template = node.template;
-  if (template.headerLabel !== undefined && (typeof template.headerLabel !== 'string' || template.headerLabel.trim() === '')) {
-    errors.push(`${prefix} template.headerLabel must be a non-empty string`);
+  if (template.headerLabel !== undefined && typeof template.headerLabel !== 'string') {
+    errors.push(`${prefix} template.headerLabel must be a string`);
   }
   if (template.heroCount !== undefined && (!Number.isInteger(template.heroCount) || template.heroCount < 0 || template.heroCount > 3)) {
     errors.push(`${prefix} template.heroCount must be an integer from 0 to 3`);
   }
-  if (!template.period || typeof template.period !== 'object' || Array.isArray(template.period)) {
+  if (template.period !== undefined && (!template.period || typeof template.period !== 'object' || Array.isArray(template.period))) {
     errors.push(`${prefix} template.period must be an object`);
   }
   rejectUnknownFields(template.period, new Set(['current', 'comparison']), `${prefix} template.period`, errors);
-  validateBindingPath(template.period?.current, `${prefix} template.period.current`, errors);
-  validateBindingPath(template.period?.comparison, `${prefix} template.period.comparison`, errors);
+  if (template.period?.current) validateBindingPath(template.period.current, `${prefix} template.period.current`, errors);
+  if (template.period?.comparison) validateBindingPath(template.period.comparison, `${prefix} template.period.comparison`, errors);
 
   const metrics = template.metrics === undefined ? [] : template.metrics;
   if (!Array.isArray(metrics)) {
@@ -214,7 +240,7 @@ function validateDashboardTemplate(node, prefix, errors) {
   if (Array.isArray(metrics) && Array.isArray(tables) && metrics.length === 0 && tables.length === 0 && template.inventory?.enabled !== true) {
     errors.push(`${prefix} template must show something: add a KPI card, a table or the inventory block`);
   }
-  const allowed = new Set(['preset', 'headerLabel', 'heroCount', 'period', 'metrics', 'tables', 'inventory']);
+  const allowed = new Set(['preset', 'headerLabel', 'heroCount', 'period', 'metrics', 'tables', 'inventory', 'includeReportCopy', 'reportCopyFields']);
   Object.keys(template).filter((key) => !allowed.has(key)).forEach((key) => {
     errors.push(`${prefix} dashboard template contains unsupported field ${key}`);
   });
@@ -236,28 +262,26 @@ function validateEmailTemplate(node, prefix, errors) {
   if (node.format !== 'report') return;
 
   if (!REPORT_PRESETS.has(node.template.preset)) errors.push(`${prefix} has unsupported report preset`);
+  validateReportCopyConfig(node.template, node.template.preset, prefix, errors);
   if (node.template.preset === 'dashboard_report_v1') {
     validateDashboardTemplate(node, prefix, errors);
     return;
   }
-  ['eyebrow', 'title'].forEach((field) => {
-    if (typeof node.template[field] !== 'string' || node.template[field].trim() === '') {
-      errors.push(`${prefix} template.${field} is required`);
+  ['eyebrow', 'title', 'description'].forEach((field) => {
+    if (node.template[field] !== undefined && typeof node.template[field] !== 'string') {
+      errors.push(`${prefix} template.${field} must be a string`);
     }
   });
-  if (node.template.description !== undefined && typeof node.template.description !== 'string') {
-    errors.push(`${prefix} template.description must be a string`);
-  }
   if (node.template.preset === 'inventory_alert_v1') {
-    rejectUnknownFields(node.template, new Set(['preset', 'eyebrow', 'title', 'description']), `${prefix} inventory template`, errors);
+    rejectUnknownFields(node.template, new Set(['preset', 'eyebrow', 'title', 'description', 'includeReportCopy', 'reportCopyFields']), `${prefix} inventory template`, errors);
     return;
   }
-  if (!node.template.period || typeof node.template.period !== 'object' || Array.isArray(node.template.period)) {
+  if (node.template.period !== undefined && (!node.template.period || typeof node.template.period !== 'object' || Array.isArray(node.template.period))) {
     errors.push(`${prefix} template.period must be an object`);
   }
   rejectUnknownFields(node.template.period, new Set(['current', 'comparison']), `${prefix} template.period`, errors);
-  validateBindingPath(node.template.period?.current, `${prefix} template.period.current`, errors);
-  validateBindingPath(node.template.period?.comparison, `${prefix} template.period.comparison`, errors);
+  if (node.template.period?.current) validateBindingPath(node.template.period.current, `${prefix} template.period.current`, errors);
+  if (node.template.period?.comparison) validateBindingPath(node.template.period.comparison, `${prefix} template.period.comparison`, errors);
 
   if (!Array.isArray(node.template.metrics)) {
     errors.push(`${prefix} template.metrics must be an array`);
@@ -314,7 +338,7 @@ function validateEmailTemplate(node, prefix, errors) {
   if (node.template.includeInventory !== undefined && typeof node.template.includeInventory !== 'boolean') {
     errors.push(`${prefix} template.includeInventory must be true or false`);
   }
-  const allowed = new Set(['preset', 'eyebrow', 'title', 'description', 'period', 'metrics', 'insightSource', 'tables', 'includeInventory']);
+  const allowed = new Set(['preset', 'eyebrow', 'title', 'description', 'period', 'metrics', 'insightSource', 'tables', 'includeInventory', 'includeReportCopy', 'reportCopyFields']);
   Object.keys(node.template).filter((key) => !allowed.has(key)).forEach((key) => {
     errors.push(`${prefix} report template contains unsupported field ${key}`);
   });

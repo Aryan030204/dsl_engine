@@ -1,0 +1,266 @@
+{
+  "workflow_id": "discount_monitor",
+  "name": "Discount Monitor",
+  "workflow_type": "root_cause_analysis",
+  "workflow_purpose": "rca",
+  "description": "Alerts on a discount rate spike, a discount usage spike and discounts outpacing sales, against the 7-day average at the same time of day, with a drill-down by code, UTM source and campaign. Port of the legacy discount_monitor.",
+  "version": "1.0",
+  "trigger": {
+    "type": "alert",
+    "alertType": "discount_monitor",
+    "metric": "discount_rate",
+    "brandScope": "global",
+    "brandIds": [],
+    "condition": {
+      "operator": ">",
+      "delta_pct": 10
+    },
+    "window": {
+      "type": "rolling",
+      "duration": "1h"
+    }
+  },
+  "state_config": {
+    "enabled": true,
+    "finding": {
+      "metric": "discount_alert_score"
+    },
+    "thresholds": {
+      "normal": 1,
+      "critical": 2
+    },
+    "cooldown": {
+      "triggered_minutes": 60,
+      "critical_minutes": 30
+    },
+    "quiet_hours": {
+      "enabled": false,
+      "start": "23:00",
+      "end": "07:00"
+    }
+  },
+  "nodes": [
+    {
+      "id": "discount_totals",
+      "type": "metric_compare",
+      "metrics": [
+        "sessions",
+        "atc_rate",
+        "cvr",
+        "sales",
+        "aov",
+        "discount_amount",
+        "gross_sales",
+        "discounted_orders",
+        "unique_discount_codes",
+        "discount_rate",
+        "usage_rate"
+      ],
+      "next": "discount_drilldown"
+    },
+    {
+      "id": "discount_drilldown",
+      "type": "recursive_dimension_breakdown",
+      "analysis_mode": "discount",
+      "discount_rate_absolute_pct": {
+        "PTS": 25,
+        "VAMA": 5,
+        "AJMAL": 10
+      },
+      "discount_rate_delta_pct": 10,
+      "usage_rate_delta_pct": 10,
+      "outpace_gap_pct": 10,
+      "outpace_min_discount_growth_pct": 10,
+      "min_total_orders": 50,
+      "output_key": "discount",
+      "next": "discount_email"
+    },
+    {
+      "id": "discount_email",
+      "type": "email",
+      "format": "report",
+      "to": [
+        "aryan.arora@trytechit.co",
+        "alok@trytechit.co"
+      ],
+      "subject": "[Discount Monitor] {{meta.brandName}} | Discounts above the 7-day average",
+      "template": {
+        "preset": "performance_report_v1",
+        "eyebrow": "Discount Monitor",
+        "title": "Discounts moved against the 7-day average",
+        "description": "Today so far compared with the same hours on each of the last 7 days.",
+        "period": {
+          "current": "meta.window",
+          "comparison": "meta.baselineWindow"
+        },
+        "metrics": [
+          {
+            "label": "Total sales",
+            "value": "metrics.current_sales",
+            "change": "metrics.sales_delta_pct",
+            "format": "currency_whole",
+            "icon": "sales"
+          },
+          {
+            "label": "Sessions",
+            "value": "metrics.current_sessions",
+            "change": "metrics.sessions_delta_pct",
+            "format": "integer",
+            "icon": "sessions"
+          },
+          {
+            "label": "ATC rate",
+            "value": "metrics.current_atc_rate",
+            "change": "metrics.atc_rate_delta_pct",
+            "format": "percent_ratio",
+            "icon": "cart"
+          },
+          {
+            "label": "CVR",
+            "value": "metrics.current_cvr",
+            "change": "metrics.cvr_delta_pct",
+            "format": "percent_ratio",
+            "icon": "conversion"
+          },
+          {
+            "label": "AOV",
+            "value": "metrics.current_aov",
+            "change": "metrics.aov_delta_pct",
+            "format": "currency_whole",
+            "icon": "aov"
+          },
+          {
+            "label": "Discount amount",
+            "value": "metrics.current_discount_amount",
+            "change": "metrics.discount_amount_delta_pct",
+            "format": "currency_whole",
+            "icon": "metric"
+          },
+          {
+            "label": "Discount rate",
+            "value": "metrics.current_discount_rate",
+            "change": "metrics.discount_rate_delta_pct",
+            "format": "percent",
+            "icon": "trend"
+          },
+          {
+            "label": "Discount usage",
+            "value": "metrics.current_usage_rate",
+            "change": "metrics.usage_rate_delta_pct",
+            "format": "percent",
+            "icon": "orders"
+          }
+        ],
+        "tables": [
+          {
+            "title": "What changed",
+            "source": "breakdowns.discount_alerts",
+            "tone": "negative",
+            "limit": 5,
+            "columns": [
+              {
+                "label": "Alert",
+                "path": "label",
+                "format": "text"
+              },
+              {
+                "label": "Level",
+                "path": "severity",
+                "format": "status"
+              },
+              {
+                "label": "Detail",
+                "path": "message",
+                "format": "text"
+              }
+            ]
+          },
+          {
+            "title": "Top discount code",
+            "source": "breakdowns.discount_top_code",
+            "tone": "neutral",
+            "limit": 1,
+            "columns": [
+              {
+                "label": "Code",
+                "path": "code",
+                "format": "text"
+              },
+              {
+                "label": "% of discounted orders",
+                "path": "orders_share_pct",
+                "format": "percent"
+              },
+              {
+                "label": "% of discount amount",
+                "path": "amount_share_pct",
+                "format": "percent"
+              }
+            ]
+          },
+          {
+            "title": "Discount by UTM source",
+            "source": "breakdowns.discount_utm_sources",
+            "tone": "neutral",
+            "limit": 5,
+            "columns": [
+              {
+                "label": "Source",
+                "path": "source_label",
+                "format": "text"
+              },
+              {
+                "label": "Baseline share",
+                "path": "baseline_share",
+                "format": "percent"
+              },
+              {
+                "label": "Today share",
+                "path": "current_share",
+                "format": "percent"
+              },
+              {
+                "label": "Change",
+                "path": "delta_pct",
+                "format": "delta_percent"
+              }
+            ]
+          },
+          {
+            "title": "Campaign drill-down",
+            "source": "breakdowns.discount_campaigns",
+            "tone": "neutral",
+            "limit": 2,
+            "columns": [
+              {
+                "label": "Source",
+                "path": "source",
+                "format": "text"
+              },
+              {
+                "label": "Campaign",
+                "path": "campaign",
+                "format": "text"
+              },
+              {
+                "label": "Baseline share",
+                "path": "baseline_share",
+                "format": "percent"
+              },
+              {
+                "label": "Today share",
+                "path": "current_share",
+                "format": "percent"
+              },
+              {
+                "label": "Codes",
+                "path": "codes_text",
+                "format": "text"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

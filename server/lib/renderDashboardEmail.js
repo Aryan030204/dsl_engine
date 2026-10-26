@@ -6,6 +6,7 @@
 // the media queries keep the desktop layout, which wraps safely.
 
 const { resolveEmailBranding } = require('./emailBranding');
+const { hasReportCopyField } = require('./reportCopy');
 const { tint, shade } = require('./colorUtils');
 const { requireBinding, requirePresentBinding, formatValue, escapeHtml } = require('./renderReportEmail');
 
@@ -123,11 +124,14 @@ function buildDashboardViewModel({ context, template, branding }) {
     throw new Error(`unsupported report preset: ${template?.preset || 'missing'}`);
   }
   const timezone = context?.meta?.timezone || 'UTC';
-  const currentPeriod = requireBinding(context, template.period.current);
-  const comparisonPeriod = requireBinding(context, template.period.comparison);
-  if (!currentPeriod?.start || !currentPeriod?.end || !comparisonPeriod?.start || !comparisonPeriod?.end) {
-    throw new Error('report period bindings must resolve to start/end objects');
-  }
+  const currentPeriod = hasReportCopyField(template, 'period.current') && template.period?.current
+    ? requireBinding(context, template.period.current)
+    : null;
+  const comparisonPeriod = hasReportCopyField(template, 'period.comparison') && template.period?.comparison
+    ? requireBinding(context, template.period.comparison)
+    : null;
+  if (currentPeriod && (!currentPeriod.start || !currentPeriod.end)) throw new Error('current report period binding must resolve to a start/end object');
+  if (comparisonPeriod && (!comparisonPeriod.start || !comparisonPeriod.end)) throw new Error('comparison report period binding must resolve to a start/end object');
   const currency = context?.meta?.currency;
 
   const cards = (template.metrics || []).map((item) => buildCard(item, context, currency));
@@ -176,10 +180,10 @@ function buildDashboardViewModel({ context, template, branding }) {
       displayName: context?.meta?.brandName,
       ...(context?.meta?.emailBranding || {})
     }, branding),
-    headerLabel: template.headerLabel || 'Daily Report',
+    headerLabel: hasReportCopyField(template, 'headerLabel') ? String(template.headerLabel || '').trim() : '',
     timezone,
-    currentDate: formatDay(currentPeriod.start, timezone),
-    comparisonDate: formatDay(comparisonPeriod.start, timezone),
+    currentDate: currentPeriod ? formatDay(currentPeriod.start, timezone) : null,
+    comparisonDate: comparisonPeriod ? formatDay(comparisonPeriod.start, timezone) : null,
     hero: cards.slice(0, heroCount),
     strip: cards.slice(heroCount),
     tables,
@@ -261,8 +265,8 @@ function renderHeader(view, c) {
     ? `<img src="${escapeHtml(brand.logoUrl)}" alt="${escapeHtml(brand.displayName)}" style="max-height:44px;max-width:220px;display:block;">`
     : `<div class="dsh-brand" style="font-size:23px;line-height:1.2;font-weight:900;letter-spacing:.2em;color:${INK};">${escapeHtml(brand.displayName.toUpperCase())}</div>`;
   return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
-      <td class="dsh-head-cell dsh-head-left" valign="top" style="padding-top:17px;">${logo}<div style="margin-top:6px;color:${c.dark};font-size:12.7px;font-weight:700;letter-spacing:.12em;">${escapeHtml(brand.tagline.toUpperCase())}</div></td>
-      <td class="dsh-head-cell dsh-head-right" align="right" valign="top"><div style="font-size:12px;font-weight:600;letter-spacing:.1em;color:${GRAY};text-transform:uppercase;">${escapeHtml(view.headerLabel)}</div><div class="dsh-date" style="margin-top:4px;font-size:23px;line-height:1.15;font-weight:800;color:${INK};">${escapeHtml(view.currentDate)}</div><div style="margin-top:4px;font-size:13px;color:${GRAY};">vs ${escapeHtml(view.comparisonDate)}</div></td>
+      <td class="dsh-head-cell dsh-head-left" valign="top" style="padding-top:17px;">${logo}</td>
+      <td class="dsh-head-cell dsh-head-right" align="right" valign="top">${view.headerLabel ? `<div style="font-size:12px;font-weight:600;letter-spacing:.1em;color:${GRAY};text-transform:uppercase;">${escapeHtml(view.headerLabel)}</div>` : ''}${view.currentDate ? `<div class="dsh-date" style="margin-top:4px;font-size:23px;line-height:1.15;font-weight:800;color:${INK};">${escapeHtml(view.currentDate)}</div>` : ''}${view.comparisonDate ? `<div style="margin-top:4px;font-size:13px;color:${GRAY};">vs ${escapeHtml(view.comparisonDate)}</div>` : ''}</td>
     </tr></table>
     <div style="height:1px;background:${LINE};margin:25px 0 31px;"></div>`;
 }
@@ -427,8 +431,7 @@ function renderDashboardReportEmail({ context, template, branding, subject }) {
   const cardLine = (card) => `${card.label}: ${card.value}${card.change == null ? '' : ` (${card.change})`}`;
   const text = [
     view.branding.displayName,
-    view.branding.tagline,
-    `${view.headerLabel}: ${view.currentDate} vs ${view.comparisonDate}`,
+    [view.headerLabel, view.currentDate, view.comparisonDate ? `vs ${view.comparisonDate}` : ''].filter(Boolean).join(' '),
     '',
     ...view.hero.map(cardLine),
     ...view.strip.map(cardLine),

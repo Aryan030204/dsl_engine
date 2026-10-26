@@ -76,7 +76,7 @@ test('report rendering formats, escapes and applies node branding precedence', (
   assert.equal(rendered.viewModel.branding.displayName, 'Node Brand');
   assert.equal(rendered.viewModel.branding.primaryColor, '#abcdef');
   assert.match(rendered.text, /Current period:/);
-  assert.match(rendered.text, /Comparison period:/);
+  assert.doesNotMatch(rendered.text, /Comparison period:/);
 });
 
 test('tenant name becomes the report wordmark when no display-name branding is configured', () => {
@@ -139,7 +139,7 @@ test('partial-day report windows retain full ranges in plain text', () => {
   ctx.meta.baselineWindow.end = '2026-08-12T06:30:00.000Z';
   const rendered = renderEmail({ format: 'report', context: ctx, template: reportTemplate(), subject: 'Partial report' });
   assert.match(rendered.text, /Current period: 13 AUG 2026 – 13 AUG 2026 \(Asia\/Kolkata\)/);
-  assert.match(rendered.text, /Comparison period: 12 AUG 2026 – 12 AUG 2026 \(Asia\/Kolkata\)/);
+  assert.doesNotMatch(rendered.text, /Comparison period: 12 AUG 2026 – 12 AUG 2026 \(Asia\/Kolkata\)/);
 });
 
 test('workflow validation accepts a report node and rejects unsafe or unsupported configuration', () => {

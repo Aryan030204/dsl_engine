@@ -86,11 +86,11 @@ test('number formatting: typographic minus, share rounding, sentence-case dates'
 
 // ---------------------------------------------------------------- the email
 
-test('the header carries the brand, tagline, label and both dates', async () => {
+test('the header carries the brand, label and both dates without a tagline', async () => {
   const { html, subject } = await render(await template());
   assert.equal(subject, 'Daily report');
   assert.match(html, />AJMAL PERFUMES</);
-  assert.match(html, />YOUR DATA\. DECODED\.</);
+  assert.doesNotMatch(html, /YOUR DATA\. DECODED\./);
   assert.match(html, />Daily Report</);
   assert.match(html, />21 Oct 2026</);
   assert.match(html, />vs 20 Oct 2026</);

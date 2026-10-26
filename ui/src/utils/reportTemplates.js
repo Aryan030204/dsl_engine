@@ -7,6 +7,34 @@ export const MAX_REPORT_TABLES = 4;
 
 export const DEFAULT_INVENTORY_OUTPUT_KEY = 'inventory_top_products';
 
+export const REPORT_COPY_FIELD_OPTIONS = {
+  performance_report_v1: [
+    { value: 'eyebrow', label: 'Eyebrow' },
+    { value: 'title', label: 'Title' },
+    { value: 'description', label: 'Description' },
+    { value: 'period.current', label: 'Current period' },
+    { value: 'period.comparison', label: 'Comparison period' },
+  ],
+  inventory_alert_v1: [
+    { value: 'eyebrow', label: 'Eyebrow' },
+    { value: 'title', label: 'Title' },
+    { value: 'description', label: 'Description' },
+  ],
+  dashboard_report_v1: [
+    { value: 'headerLabel', label: 'Header label' },
+    { value: 'period.current', label: 'Current period' },
+    { value: 'period.comparison', label: 'Comparison period' },
+  ],
+};
+
+export function getReportCopyFields(template = {}) {
+  const options = REPORT_COPY_FIELD_OPTIONS[template.preset] || REPORT_COPY_FIELD_OPTIONS.performance_report_v1;
+  const defaults = options.map(({ value }) => value);
+  const configured = Array.isArray(template.reportCopyFields) ? template.reportCopyFields : defaults;
+  const allowed = new Set(defaults);
+  return configured.filter((field, index) => allowed.has(field) && configured.indexOf(field) === index);
+}
+
 // KPI cards for the counts an inventory-mode Dimension Breakdown node produces.
 export function buildInventoryKpiCards() {
   return [

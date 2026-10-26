@@ -1,0 +1,97 @@
+{
+  "workflow_id": "cod_monitor",
+  "name": "COD Monitor",
+  "workflow_type": "root_cause_analysis",
+  "workflow_purpose": "rca",
+  "description": "Alerts when the share of COD orders rises against the 7-day average, overall and for chosen products. Port of the legacy cod_monitor.",
+  "version": "1.0",
+
+  "trigger": {
+    "type": "alert",
+    "alertType": "cod_monitor",
+    "metric": "cod_pct",
+    "brandScope": "global",
+    "brandIds": [],
+    "condition": { "operator": ">", "delta_pct": 7 },
+    "window": { "type": "rolling", "duration": "1h" }
+  },
+
+  "state_config": {
+    "enabled": true,
+    "finding": { "metric": "cod_alert_score" },
+    "thresholds": { "normal": 1, "critical": 2 },
+    "cooldown": { "triggered_minutes": 60, "critical_minutes": 30 },
+    "quiet_hours": { "enabled": false, "start": "23:00", "end": "07:00" }
+  },
+
+  "nodes": [
+    {
+      "id": "cod_overall",
+      "type": "metric_compare",
+      "metrics": ["cod_pct", "prepaid_pct", "partial_pct", "orders"],
+      "next": "cod_products"
+    },
+    {
+      "id": "cod_products",
+      "type": "recursive_dimension_breakdown",
+      "analysis_mode": "payment_mix",
+      "product_ids": ["8622333100210", "8715135189170", "8740073111730", "8570090062002", "8657193566386"],
+      "overall_threshold_pct": 7,
+      "product_threshold_pct": 11,
+      "min_orders": 20,
+      "min_baseline_days": 4,
+      "output_key": "cod_products",
+      "next": "cod_email"
+    },
+    {
+      "id": "cod_email",
+      "type": "email",
+      "format": "report",
+      "to": ["aryan.arora@trytechit.co", "alok@trytechit.co"],
+      "subject": "[COD Monitor] {{meta.brandName}} | COD share above its 7-day average",
+      "template": {
+        "preset": "performance_report_v1",
+        "eyebrow": "COD Monitor",
+        "title": "COD share is above its 7-day average",
+        "description": "Cash on delivery mix moved beyond the configured monitor thresholds.",
+        "period": { "current": "meta.window", "comparison": "meta.baselineWindow" },
+        "metrics": [
+          { "label": "COD % today", "value": "metrics.current_cod_pct", "change": "metrics.cod_pct_delta_pct", "format": "percent", "icon": "metric" },
+          { "label": "COD % 7-day average", "value": "metrics.baseline_cod_pct", "format": "percent", "icon": "metric" },
+          { "label": "Prepaid % today", "value": "metrics.current_prepaid_pct", "change": "metrics.prepaid_pct_delta_pct", "format": "percent", "icon": "metric" },
+          { "label": "Partial (PPCOD) % today", "value": "metrics.current_partial_pct", "change": "metrics.partial_pct_delta_pct", "format": "percent", "icon": "metric" },
+          { "label": "Orders today", "value": "metrics.current_orders", "format": "integer", "icon": "orders" }
+        ],
+        "tables": [
+          {
+            "title": "Triggered products",
+            "source": "breakdowns.cod_products_flagged",
+            "tone": "negative",
+            "limit": 20,
+            "columns": [
+              { "label": "Product", "path": "product_name", "format": "text" },
+              { "label": "ID", "path": "product_id", "format": "text" },
+              { "label": "Today", "path": "current_cod_pct", "format": "percent" },
+              { "label": "7-day avg", "path": "baseline_cod_pct", "format": "percent" },
+              { "label": "Change", "path": "cod_delta_pct", "format": "delta_percent" },
+              { "label": "Orders", "path": "orders", "format": "integer" }
+            ]
+          },
+          {
+            "title": "All monitored products",
+            "source": "breakdowns.cod_products",
+            "tone": "neutral",
+            "limit": 20,
+            "columns": [
+              { "label": "Product", "path": "product_name", "format": "text" },
+              { "label": "Today", "path": "current_cod_pct", "format": "percent" },
+              { "label": "7-day avg", "path": "baseline_cod_pct", "format": "percent" },
+              { "label": "Change", "path": "cod_delta_pct", "format": "delta_percent" },
+              { "label": "Orders", "path": "orders", "format": "integer" }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

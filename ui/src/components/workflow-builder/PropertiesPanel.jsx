@@ -12,6 +12,8 @@ import {
   createDashboardTemplate,
   DASHBOARD_SHARE_TOTAL_PATH,
   buildTableSourceSuggestions,
+  REPORT_COPY_FIELD_OPTIONS,
+  getReportCopyFields,
 } from '../../utils/reportTemplates';
 
 // Generate unique ID for rules
@@ -587,6 +589,10 @@ export default function PropertiesPanel({
           ? data.template
           : createDefaultReportTemplate();
         const updateReportTemplate = (field, value) => handleChange('template', { ...reportTemplate, [field]: value });
+        const reportCopyFields = getReportCopyFields(reportTemplate);
+        const reportCopyOptions = REPORT_COPY_FIELD_OPTIONS[reportTemplate.preset] || REPORT_COPY_FIELD_OPTIONS.performance_report_v1;
+        const addReportCopyField = (field) => updateReportTemplate('reportCopyFields', [...reportCopyFields, field]);
+        const removeReportCopyField = (field) => updateReportTemplate('reportCopyFields', reportCopyFields.filter((item) => item !== field));
         const updateMetric = (index, field, value) => {
           const metrics = [...(reportTemplate.metrics || [])];
           metrics[index] = { ...metrics[index], [field]: value };
@@ -726,6 +732,7 @@ export default function PropertiesPanel({
                       if (preset === 'inventory_alert_v1') {
                         handleChange('template', {
                           preset,
+                          includeReportCopy: true,
                           eyebrow: 'Inventory Alert',
                           title: 'Top Products Inventory Report',
                           description: 'Inventory health of the top 50 products, ranked by 7-day sales.'
@@ -744,15 +751,38 @@ export default function PropertiesPanel({
                   </select>
                 </div>
                 <div className="space-y-2 pt-3 border-t">
-                  <div className="text-xs font-semibold text-gray-700">Report Copy</div>
-                  {reportTemplate.preset === 'dashboard_report_v1' ? (
-                    <input value={reportTemplate.headerLabel || ''} onChange={(e) => updateReportTemplate('headerLabel', e.target.value)} placeholder="Header label (e.g. Daily Report)" className="w-full border p-2 rounded text-sm" />
-                  ) : ['eyebrow', 'title', 'description'].map((field) => (
-                    <input key={field} value={reportTemplate[field] || ''} onChange={(e) => updateReportTemplate(field, e.target.value)} placeholder={field} className="w-full border p-2 rounded text-sm" />
-                  ))}
-                  {reportTemplate.preset !== 'inventory_alert_v1' && <>
-                    <input value={reportTemplate.period?.current || ''} onChange={(e) => updateReportTemplate('period', { ...(reportTemplate.period || {}), current: e.target.value })} placeholder="Current period path" className="w-full border p-2 rounded text-sm font-mono" />
-                    <input value={reportTemplate.period?.comparison || ''} onChange={(e) => updateReportTemplate('period', { ...(reportTemplate.period || {}), comparison: e.target.value })} placeholder="Comparison period path" className="w-full border p-2 rounded text-sm font-mono" />
+                  <label className="flex items-center gap-2 text-xs font-semibold text-gray-700">
+                    <input type="checkbox" checked={reportTemplate.includeReportCopy !== false} onChange={(e) => updateReportTemplate('includeReportCopy', e.target.checked)} />
+                    Include report copy
+                  </label>
+                  {reportTemplate.includeReportCopy !== false && <>
+                    <div className="text-[10px] text-gray-400">Add or remove any copy field. Empty fields are omitted from the email.</div>
+                    {reportCopyFields.map((field) => {
+                      const option = reportCopyOptions.find((item) => item.value === field);
+                      const value = field === 'period.current'
+                        ? reportTemplate.period?.current || ''
+                        : field === 'period.comparison'
+                          ? reportTemplate.period?.comparison || ''
+                          : reportTemplate[field] || '';
+                      const updateValue = (nextValue) => {
+                        if (field === 'period.current' || field === 'period.comparison') {
+                          const key = field.split('.')[1];
+                          const period = { ...(reportTemplate.period || {}), [key]: nextValue };
+                          if (!nextValue) delete period[key];
+                          updateReportTemplate('period', period);
+                        } else {
+                          updateReportTemplate(field, nextValue);
+                        }
+                      };
+                      return <div key={field} className="flex gap-2">
+                        <input value={value} onChange={(e) => updateValue(e.target.value)} placeholder={option?.label || field} className={`min-w-0 flex-1 border p-2 rounded text-sm ${field.startsWith('period.') ? 'font-mono' : ''}`} />
+                        <button type="button" onClick={() => removeReportCopyField(field)} className="text-red-500" title={`Remove ${option?.label || field}`}><Trash2 className="w-4 h-4" /></button>
+                      </div>;
+                    })}
+                    {reportCopyFields.length < reportCopyOptions.length && <select value="" onChange={(e) => e.target.value && addReportCopyField(e.target.value)} className="w-full border p-2 rounded text-sm bg-white">
+                      <option value="">+ Add report copy field</option>
+                      {reportCopyOptions.filter((option) => !reportCopyFields.includes(option.value)).map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                    </select>}
                   </>}
                 </div>
 
@@ -877,7 +907,7 @@ export default function PropertiesPanel({
 
             <div className="space-y-2 pt-3 border-t">
               <div className="text-xs font-semibold text-gray-700">Branding Overrides</div>
-              {['displayName', 'logoUrl', 'tagline', 'primaryColor', 'footerText'].map((field) => (
+              {['displayName', 'logoUrl', 'primaryColor', 'footerText'].map((field) => (
                 <input key={field} value={data.branding?.[field] || ''} onChange={(e) => handleChange('branding', { ...(data.branding || {}), [field]: e.target.value || undefined })} placeholder={field} className="w-full border p-2 rounded text-sm" />
               ))}
             </div>
