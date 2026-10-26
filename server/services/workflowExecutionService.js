@@ -97,30 +97,6 @@ async function applyStateEngine({ run, result, intents, telegramIntents = [], st
   await run.save();
 }
 
-// Copies the tenant's settings onto a run's context.meta.
-function applyTenantToMeta(meta, tenant) {
-  if (!meta.brandName && tenant?.name) {
-    meta.brandName = tenant.name;
-  }
-  // Report emails format `currency` cards/columns in the tenant's currency. Always
-  // taken from the tenant's current setting (never from the run's saved context),
-  // so a rerun of an older run picks up a currency changed since.
-  if (tenant?.settings?.currency) {
-    meta.currency = tenant.settings.currency;
-  }
-  // The tenant's Shopify store, which the inventory sales ranking (Redis) is keyed by. Taken from
-  // the tenant's current setting for the same reason as the currency.
-  if (tenant?.settings?.shopifyDomain) {
-    meta.shopifyDomain = tenant.settings.shopifyDomain;
-  } else {
-    delete meta.shopifyDomain;
-  }
-  if (!meta.emailBranding && tenant?.settings?.emailBranding) {
-    meta.emailBranding = { ...tenant.settings.emailBranding };
-  }
-  return meta;
-}
-
 // Cuts a run off at the time limit, or as soon as it is cancelled (isCanceled), even if a node is
 // stuck on a slow query. The runner also stops itself between nodes, so whatever is still in flight
 // finishes harmlessly in the background.
@@ -154,6 +130,30 @@ function executeWithTimeout(promise, timeoutMs, { isCanceled = null, pollMs = 20
   return Promise.race([promise, ...guards]).finally(() => {
     timers.forEach((timer) => { clearTimeout(timer); clearInterval(timer); });
   });
+}
+
+// Copies the tenant's settings onto a run's context.meta.
+function applyTenantToMeta(meta, tenant) {
+  if (!meta.brandName && tenant?.name) {
+    meta.brandName = tenant.name;
+  }
+  // Report emails format `currency` cards/columns in the tenant's currency. Always
+  // taken from the tenant's current setting (never from the run's saved context),
+  // so a rerun of an older run picks up a currency changed since.
+  if (tenant?.settings?.currency) {
+    meta.currency = tenant.settings.currency;
+  }
+  // The tenant's Shopify store, which the inventory sales ranking (Redis) is keyed by. Taken from
+  // the tenant's current setting for the same reason as the currency.
+  if (tenant?.settings?.shopifyDomain) {
+    meta.shopifyDomain = tenant.settings.shopifyDomain;
+  } else {
+    delete meta.shopifyDomain;
+  }
+  if (!meta.emailBranding && tenant?.settings?.emailBranding) {
+    meta.emailBranding = { ...tenant.settings.emailBranding };
+  }
+  return meta;
 }
 
 async function executeRun({ run, runId }) {

@@ -1,7 +1,9 @@
 // sql/templates/metricQuery.js
 const { normalizeWindowForQuery, isFullDayAlignedWindow } = require('../../lib/timeWindowUtils');
 
-const PAYMENT_METRICS = new Set(['cod_orders', 'ppcod_orders', 'prepaid_orders']);
+const PAYMENT_METRICS = new Set(['cod_orders', 'ppcod_orders', 'prepaid_orders', 'cod_pct', 'prepaid_pct', 'partial_pct']);
+// Order-level discount figures (shopify_orders): discount amount, gross sales (sum of order totals), orders that used a code.
+const DISCOUNT_METRICS = new Set(['discount_amount', 'gross_sales', 'discounted_orders', 'unique_discount_codes', 'discount_rate', 'usage_rate']);
 
 // Hourly tables keep date and hour in separate columns. The CONCAT predicate gives the exact
 // hour boundary but cannot use an index, so a plain `date` range (same bounds, widened to
@@ -28,6 +30,21 @@ function ordersWhere() {
 }
 function ordersParams(start, end) {
   return [start, end, start, end];
+}
+
+// Discount figures for one window. discount_amount, total_price and the discount code are order-level values
+// stored on one line item per order, so plain sums already give per-order totals (same as the legacy monitor).
+function discountCte(name) {
+  return `${name} AS (
+  SELECT
+    COALESCE(COUNT(DISTINCT order_id), 0) AS orders,
+    COALESCE(COUNT(DISTINCT CASE WHEN discount_codes IS NOT NULL AND discount_codes != '' THEN order_id END), 0) AS discounted_orders,
+    COALESCE(SUM(discount_amount), 0) AS discount_amount,
+    COALESCE(SUM(total_price), 0) AS gross_sales,
+    COALESCE(COUNT(DISTINCT CASE WHEN discount_codes IS NOT NULL AND discount_codes != '' THEN discount_codes END), 0) AS unique_codes
+  FROM shopify_orders
+  WHERE ${ordersWhere()}
+)`;
 }
 
 // Sales source for one window (tenant-local "YYYY-MM-DD HH:MM:SS" bounds):
@@ -82,6 +99,7 @@ module.exports = function metricQuery({ tenantId, metrics = [], window, baseline
   // The COD/PPCOD/Prepaid classification re-scans shopify_orders (GROUP BY order_name plus
   // wildcard LIKEs), so it only runs when a payment metric is actually requested.
   const includePayment = metrics.some((metric) => PAYMENT_METRICS.has(metric));
+  const includeDiscount = metrics.some((metric) => DISCOUNT_METRICS.has(metric));
   const currentSales = includeSales ? salesCte('current_sales', normalizedWindow) : null;
   const baselineSales = includeSales ? salesCte('baseline_sales', normalizedBaselineWindow) : null;
 
@@ -162,7 +180,9 @@ baseline_payment_orders AS (
       AND order_name IS NOT NULL
     GROUP BY order_name
   ) classified
-)` : ''}${includeSales ? `,
+)` : ''}${includeDiscount ? `,
+${discountCte('current_discount')},
+${discountCte('baseline_discount')}` : ''}${includeSales ? `,
 ${currentSales.sql},
 ${baselineSales.sql}` : ''}
 SELECT
@@ -187,7 +207,18 @@ SELECT
   0 AS current_ppcod_orders,
   0 AS baseline_ppcod_orders,
   0 AS current_prepaid_orders,
-  0 AS baseline_prepaid_orders`}${includeSales ? `,
+  0 AS baseline_prepaid_orders`}${includeDiscount ? `,
+
+  cd.orders AS current_discount_orders,
+  bd.orders AS baseline_discount_orders,
+  cd.discounted_orders AS current_discounted_orders,
+  bd.discounted_orders AS baseline_discounted_orders,
+  cd.discount_amount AS current_discount_amount,
+  bd.discount_amount AS baseline_discount_amount,
+  cd.gross_sales AS current_gross_sales,
+  bd.gross_sales AS baseline_gross_sales,
+  cd.unique_codes AS current_unique_discount_codes,
+  bd.unique_codes AS baseline_unique_discount_codes` : ''}${includeSales ? `,
 
   csl.sales AS current_sales,
   bsl.sales AS baseline_sales,
@@ -198,7 +229,9 @@ CROSS JOIN baseline_sessions bs
 CROSS JOIN current_orders co
 CROSS JOIN baseline_orders bo${includePayment ? `
 CROSS JOIN current_payment_orders cpo
-CROSS JOIN baseline_payment_orders bpo` : ''}${includeSales ? `
+CROSS JOIN baseline_payment_orders bpo` : ''}${includeDiscount ? `
+CROSS JOIN current_discount cd
+CROSS JOIN baseline_discount bd` : ''}${includeSales ? `
 CROSS JOIN current_sales csl
 CROSS JOIN baseline_sales bsl` : ''};
   `;
@@ -210,6 +243,8 @@ CROSS JOIN baseline_sales bsl` : ''};
     ...ordersParams(baselineStart, baselineEnd),
     // payment-type orders (only when requested): current window, then baseline window
     ...(includePayment ? [...ordersParams(windowStart, windowEnd), ...ordersParams(baselineStart, baselineEnd)] : []),
+    // discount figures (only when requested): current window, then baseline window
+    ...(includeDiscount ? [...ordersParams(windowStart, windowEnd), ...ordersParams(baselineStart, baselineEnd)] : []),
     // optional sales: current, then baseline (dates or datetimes per salesCte)
     ...(includeSales ? [...currentSales.params, ...baselineSales.params] : [])
   ];

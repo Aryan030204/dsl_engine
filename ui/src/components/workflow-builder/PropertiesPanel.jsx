@@ -31,7 +31,13 @@ const METRIC_OPTIONS = [
 
 // metric_compare can also report store-level sales and AOV (from hour_wise_sales);
 // breakdowns can't rank by them, so they're kept out of METRIC_OPTIONS.
-const COMPARE_METRIC_OPTIONS = [...METRIC_OPTIONS, 'sales', 'aov'];
+const COMPARE_METRIC_OPTIONS = [
+  ...METRIC_OPTIONS, 'sales', 'aov',
+  // share of orders by payment type, in percent (day-averaged baseline when the schedule uses a 7-day average)
+  'cod_pct', 'prepaid_pct', 'partial_pct',
+  // order-level discount figures from shopify_orders
+  'discount_amount', 'gross_sales', 'discounted_orders', 'unique_discount_codes', 'discount_rate', 'usage_rate'
+];
 
 const RANK_BY_OPTIONS = [
   { value: 'delta', label: 'Delta (default)' },
@@ -810,7 +816,7 @@ export default function PropertiesPanel({
                   )}
                   {(reportTemplate.metrics || []).map((metric, index) => (
                     <div key={index} className="border rounded p-2 space-y-2 bg-gray-50">
-                      <div className="flex gap-2"><input value={metric.label || ''} onChange={(e) => updateMetric(index, 'label', e.target.value)} placeholder="Label" className="min-w-0 flex-1 border p-1 rounded text-xs" /><button type="button" disabled={(reportTemplate.metrics || []).length <= 1} onClick={() => updateReportTemplate('metrics', reportTemplate.metrics.filter((_, idx) => idx !== index))} className="text-red-500 disabled:text-gray-300"><Trash2 className="w-4 h-4" /></button></div>
+                      <div className="flex gap-2"><input value={metric.label || ''} onChange={(e) => updateMetric(index, 'label', e.target.value)} placeholder="Label" className="min-w-0 flex-1 border p-1 rounded text-xs" /><button type="button" onClick={() => updateReportTemplate('metrics', reportTemplate.metrics.filter((_, idx) => idx !== index))} className="text-red-500"><Trash2 className="w-4 h-4" /></button></div>
                       <input list="report-kpi-paths" value={metric.value || ''} onChange={(e) => updateMetric(index, 'value', e.target.value)} placeholder="Value context path" className="w-full border p-1 rounded text-xs font-mono" />
                       <input list="report-kpi-paths" value={metric.change || ''} onChange={(e) => updateMetric(index, 'change', e.target.value || undefined)} placeholder="Change context path (optional)" className="w-full border p-1 rounded text-xs font-mono" />
                       <div className="flex gap-2"><select value={metric.format || 'text'} onChange={(e) => updateMetric(index, 'format', e.target.value)} className="min-w-0 flex-1 border p-1 rounded text-xs bg-white">{EMAIL_VALUE_FORMATS.map((format) => <option key={format}>{format}</option>)}</select><select value={metric.icon || 'metric'} onChange={(e) => updateMetric(index, 'icon', e.target.value)} className="min-w-0 flex-1 border p-1 rounded text-xs bg-white">{EMAIL_METRIC_ICONS.map((icon) => <option key={icon}>{icon}</option>)}</select></div>
@@ -1580,16 +1586,46 @@ export default function PropertiesPanel({
                        <select value={data.analysis_mode || 'sales'} onChange={(e) => handleChange('analysis_mode', e.target.value)} className="w-full border text-sm p-2 rounded bg-white">
                          <option value="sales">Sales performance</option>
                          <option value="inventory">Inventory coverage</option>
+                         <option value="web_vitals">Web vitals (top pages)</option>
+                         <option value="payment_mix">COD share by product (alert)</option>
+                         <option value="discount">Discount drill-down (alert)</option>
                        </select>
                      </div>
-                     {data.analysis_mode === 'inventory' ? (
+                     {data.analysis_mode === 'payment_mix' ? (
+                       <div className="space-y-3 rounded border border-amber-200 bg-amber-50 p-3">
+                         <p className="text-xs text-amber-900">For each listed product, compares today's COD share of its orders with the average of its daily COD share over the baseline days. Run it after a Metric Compare that includes <span className="font-mono">cod_pct</span>; it writes <span className="font-mono">metrics.cod_alert_score</span> (1 = alert, 2 = critical) for the alert state.</p>
+                         <div><label className="block text-xs font-medium text-gray-600 mb-1">Product IDs (comma separated)</label><input type="text" defaultValue={(data.product_ids || []).join(', ')} onBlur={(e) => handleChange('product_ids', e.target.value.split(/[\s,]+/).filter(Boolean))} placeholder="8622333100210, 8715135189170" className="w-full border p-2 rounded text-sm bg-white font-mono" /></div>
+                         <div><label className="block text-xs font-medium text-gray-600 mb-1">Overall alert at COD rise of (%)</label><input type="number" min="0" step="0.5" value={data.overall_threshold_pct ?? 7} onChange={(e) => handleChange('overall_threshold_pct', Number(e.target.value))} className="w-full border p-2 rounded text-sm bg-white" /></div>
+                         <div><label className="block text-xs font-medium text-gray-600 mb-1">Product alert at COD rise of (%)</label><input type="number" min="0" step="0.5" value={data.product_threshold_pct ?? 11} onChange={(e) => handleChange('product_threshold_pct', Number(e.target.value))} className="w-full border p-2 rounded text-sm bg-white" /></div>
+                         <div><label className="block text-xs font-medium text-gray-600 mb-1">Minimum orders per product per day</label><input type="number" min="1" value={data.min_orders ?? 20} onChange={(e) => handleChange('min_orders', Number(e.target.value))} className="w-full border p-2 rounded text-sm bg-white" /></div>
+                         <div><label className="block text-xs font-medium text-gray-600 mb-1">Minimum baseline days per product</label><input type="number" min="1" value={data.min_baseline_days ?? 4} onChange={(e) => handleChange('min_baseline_days', Number(e.target.value))} className="w-full border p-2 rounded text-sm bg-white" /></div>
+                         <div><label className="block text-xs font-medium text-gray-600 mb-1">Output Key (optional)</label><OutputKeyInput value={data.output_key || ''} onChange={(nextValue) => handleChange('output_key', nextValue)} placeholder="cod_products" /></div>
+                       </div>
+                     ) : data.analysis_mode === 'discount' ? (
+                       <div className="space-y-3 rounded border border-amber-200 bg-amber-50 p-3">
+                         <p className="text-xs text-amber-900">Checks discount rate, discount usage and discount-vs-sales growth, and when one fires adds the top code, new codes, UTM source shares and the campaign and codes under each flagged source. Run it after a Metric Compare that includes the discount metrics; it writes <span className="font-mono">metrics.discount_alert_score</span> (1 = alert, 2 = critical).</p>
+                         <div><label className="block text-xs font-medium text-gray-600 mb-1">Absolute discount rate per brand (optional, e.g. VAMA:5, PTS:25)</label><input type="text" defaultValue={Object.entries(data.discount_rate_absolute_pct && typeof data.discount_rate_absolute_pct === 'object' ? data.discount_rate_absolute_pct : {}).map(([brand, value]) => `${brand}:${value}`).join(', ')} onBlur={(e) => { const entries = e.target.value.split(',').map((part) => part.split(':').map((piece) => piece.trim())).filter(([brand, value]) => brand && Number(value) > 0); handleChange('discount_rate_absolute_pct', entries.length ? Object.fromEntries(entries.map(([brand, value]) => [brand.toUpperCase(), Number(value)])) : undefined); }} placeholder="VAMA:5, PTS:25, AJMAL:10" className="w-full border p-2 rounded text-sm bg-white font-mono" /><p className="mt-1 text-[11px] text-gray-500">A brand listed here alerts when its discount rate reaches this value. Other brands alert on the relative rise below.</p></div>
+                         <div><label className="block text-xs font-medium text-gray-600 mb-1">Alert at discount rate rise of (%)</label><input type="number" min="0" step="0.5" value={data.discount_rate_delta_pct ?? 10} onChange={(e) => handleChange('discount_rate_delta_pct', Number(e.target.value))} className="w-full border p-2 rounded text-sm bg-white" /></div>
+                         <div><label className="block text-xs font-medium text-gray-600 mb-1">Alert at discount usage rise of (%)</label><input type="number" min="0" step="0.5" value={data.usage_rate_delta_pct ?? 10} onChange={(e) => handleChange('usage_rate_delta_pct', Number(e.target.value))} className="w-full border p-2 rounded text-sm bg-white" /></div>
+                         <div><label className="block text-xs font-medium text-gray-600 mb-1">Discount growth ahead of sales growth by (points)</label><input type="number" min="0" step="0.5" value={data.outpace_gap_pct ?? 10} onChange={(e) => handleChange('outpace_gap_pct', Number(e.target.value))} className="w-full border p-2 rounded text-sm bg-white" /></div>
+                         <div><label className="block text-xs font-medium text-gray-600 mb-1">Minimum orders so far today</label><input type="number" min="1" value={data.min_total_orders ?? 50} onChange={(e) => handleChange('min_total_orders', Number(e.target.value))} className="w-full border p-2 rounded text-sm bg-white" /></div>
+                         <div><label className="block text-xs font-medium text-gray-600 mb-1">Output Key (optional)</label><OutputKeyInput value={data.output_key || ''} onChange={(nextValue) => handleChange('output_key', nextValue)} placeholder="discount" /></div>
+                       </div>
+                     ) : data.analysis_mode === 'inventory' ? (
                        <div className="space-y-3 rounded border border-emerald-200 bg-emerald-50 p-3">
-                         <p className="text-xs text-emerald-900">Takes the top products from the store’s cached 7-day sales ranking (set the tenant’s Shopify domain in Settings; falls back to stored 7-day unit sales if the cache is unavailable), sums variant stock and sales, and uses the lowest stored variant DOH as the product’s risk level.</p>
+                         <p className="text-xs text-emerald-900">Ranks products, sums variant stock and sales, and uses the lowest stored variant DOH as the product’s risk level.</p>
+                         <div><label className="block text-xs font-medium text-gray-600 mb-1">Rank top products by</label><select value={data.inventory_ranking || 'units'} onChange={(e) => handleChange('inventory_ranking', e.target.value)} className="w-full border p-2 rounded text-sm bg-white"><option value="sales">Sales, last 7 days (from Redis)</option><option value="units">Units sold, last 7 days (from the database)</option></select><p className="mt-1 text-xs text-gray-500">Sales ranking needs the tenant's Shopify store set in Settings, and covers at most the top 20 products. If it can't be read, the report falls back to units sold.</p></div>
                          <div><label className="block text-xs font-medium text-gray-600 mb-1">Top products to analyze</label><input type="number" min="1" max="100" value={data.inventory_top_k ?? 50} onChange={(e) => handleChange('inventory_top_k', Number(e.target.value))} className="w-full border p-2 rounded text-sm" /></div>
                          <div><label className="block text-xs font-medium text-gray-600 mb-1">Lowest-DOH products to show in report</label><input type="number" min="1" max="100" value={data.inventory_report_top_k ?? 2} onChange={(e) => handleChange('inventory_report_top_k', Number(e.target.value))} className="w-full border p-2 rounded text-sm" /><p className="mt-1 text-xs text-gray-500">Shows this many analyzed products, ordered from lowest DOH upward.</p></div>
                          <div><label className="block text-xs font-medium text-gray-600 mb-1">Critical at or below (DOH days)</label><input type="number" min="0" step="0.5" value={data.critical_doh_days ?? 7} onChange={(e) => handleChange('critical_doh_days', Number(e.target.value))} className="w-full border p-2 rounded text-sm" /></div>
                          <div><label className="block text-xs font-medium text-gray-600 mb-1">Healthy at or above (DOH days)</label><input type="number" min="0" step="0.5" value={data.healthy_doh_days ?? 15} onChange={(e) => handleChange('healthy_doh_days', Number(e.target.value))} className="w-full border p-2 rounded text-sm" /></div>
                          <div><label className="block text-xs font-medium text-gray-600 mb-1">Output Key (optional)</label><OutputKeyInput value={data.output_key || ''} onChange={(nextValue) => handleChange('output_key', nextValue)} placeholder="inventory_top_products" suggestions={['inventory_top_products']} /></div>
+                       </div>
+                     ) : data.analysis_mode === 'web_vitals' ? (
+                       <div className="space-y-3 rounded border border-emerald-200 bg-emerald-50 p-3">
+                         <p className="text-xs text-emerald-900">Reads the web vitals table for the run's reporting window. Pages are ranked by sessions; the performance score is averaged over the day's snapshots, and sessions and CVR come from the full-day sessions table.</p>
+                         <div><label className="block text-xs font-medium text-gray-600 mb-1">Top pages to include</label><input type="number" min="1" max="50" value={data.web_vitals_top_k ?? 5} onChange={(e) => handleChange('web_vitals_top_k', Number(e.target.value))} className="w-full border p-2 rounded text-sm" /></div>
+                         <div><label className="block text-xs font-medium text-gray-600 mb-1">Output Key (optional)</label><OutputKeyInput value={data.output_key || ''} onChange={(nextValue) => handleChange('output_key', nextValue)} placeholder="web_vitals_pages" suggestions={['web_vitals_pages']} /></div>
                        </div>
                      ) : (
                      <>

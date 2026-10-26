@@ -50,6 +50,10 @@ const SCHEDULE_WINDOW_MODES = {
   day_to_date_vs_previous_day: {
     label: 'Today Until Scheduled Time vs Yesterday',
     description: 'Current window is 00:00 to the scheduled hour; baseline is yesterday 00:00 to the same hour. Minute offsets are ignored.'
+  },
+  day_to_date_vs_7day_average: {
+    label: 'Today Until Scheduled Time vs 7-Day Average',
+    description: 'Current window is 00:00 to the scheduled hour; baseline is the average of the same 00:00 to scheduled-hour range on each of the 7 days before today. Minute offsets are ignored.'
   }
 };
 
@@ -677,6 +681,7 @@ export default function WorkflowDetailPage() {
                         {SCHEDULE_WINDOW_MODES[scheduleForm.windowMode].description}
                       </p>
                       {(scheduleForm.windowMode === 'day_to_date_vs_previous_day'
+                        || scheduleForm.windowMode === 'day_to_date_vs_7day_average'
                         ) && (
                         <p className="text-xs text-amber-700 mt-1">
                           The period ends at the start of the scheduled hour, so a 09:03 run analyses 00:00 to 09:00. The minutes

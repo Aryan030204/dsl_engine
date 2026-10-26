@@ -16,6 +16,8 @@ export const STATE_METRIC_OPTIONS = [
   { value: 'atc_rate_delta_pct', label: 'ATC rate change %' },
   { value: 'sales_delta_pct', label: 'Total sales change % (needs "sales" in Metric Compare)' },
   { value: 'aov_delta_pct', label: 'AOV change % (needs "aov" in Metric Compare)' },
+  { value: 'cod_alert_score', label: 'COD alert score (COD share by product node; use thresholds 1 / 2)' },
+  { value: 'discount_alert_score', label: 'Discount alert score (Discount drill-down node; use thresholds 1 / 2)' },
 ];
 
 // Thresholds are signed values of the metric. Critical below normal alerts on drops

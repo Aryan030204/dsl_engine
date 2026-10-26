@@ -22,6 +22,46 @@ const ALLOWED_DIMENSIONS = new Set([
   'referrer_name'
 ]);
 
+// COD (payment_mix) and discount monitor nodes: positive-number options, the COD product whitelist and the
+// per-brand discount-rate thresholds. Everything else about them is fixed in nodes/monitors.
+const MONITOR_POSITIVE_OPTIONS = {
+  payment_mix: ['overall_threshold_pct', 'product_threshold_pct', 'min_orders', 'min_baseline_days'],
+  discount: [
+    'discount_rate_delta_pct', 'outpace_gap_pct', 'outpace_min_discount_growth_pct', 'usage_rate_delta_pct',
+    'new_code_min_share_pct', 'code_cardinality_guard_ratio', 'utm_min_current_share', 'utm_uplift_delta_pct',
+    'utm_max_flagged', 'divergence_pp_to_split', 'min_total_orders'
+  ]
+};
+
+function getMonitorNodeErrors(node) {
+  const errors = [];
+  const label = node.analysis_mode === 'payment_mix' ? 'COD product monitor' : 'discount monitor';
+  for (const option of MONITOR_POSITIVE_OPTIONS[node.analysis_mode]) {
+    if (node[option] !== undefined && (!Number.isFinite(Number(node[option])) || Number(node[option]) <= 0)) {
+      errors.push(`${label} node ${node.id} ${option} must be a positive number`);
+    }
+  }
+  if (node.output_key !== undefined && (typeof node.output_key !== 'string' || !node.output_key.trim())) {
+    errors.push(`${label} node ${node.id} has invalid output_key`);
+  }
+  if (node.analysis_mode === 'payment_mix') {
+    const ids = node.product_ids;
+    if (!Array.isArray(ids) || ids.length === 0 || ids.length > 100) {
+      errors.push(`${label} node ${node.id} product_ids must list 1 to 100 product ids`);
+    } else if (ids.some((id) => !/^\d{1,20}$/.test(String(id ?? '').trim()))) {
+      errors.push(`${label} node ${node.id} product_ids must be numeric product ids`);
+    }
+  }
+  if (node.analysis_mode === 'discount' && node.discount_rate_absolute_pct !== undefined) {
+    const absolute = node.discount_rate_absolute_pct;
+    const values = absolute && typeof absolute === 'object' && !Array.isArray(absolute) ? Object.values(absolute) : [absolute];
+    if (values.some((value) => !Number.isFinite(Number(value)) || Number(value) <= 0)) {
+      errors.push(`${label} node ${node.id} discount_rate_absolute_pct must be a positive number or a { TENANT: number } map`);
+    }
+  }
+  return errors;
+}
+
 const ALLOWED_OPS = new Set(['>', '>=', '<', '<=', '==', '!=']);
 const ALLOWED_BREAKDOWN_METRICS = new Set([
   'orders', 'sessions', 'cvr', 'atc_rate', 'atc_sessions',
@@ -219,8 +259,8 @@ function validateEmailTemplate(node, prefix, errors) {
   validateBindingPath(node.template.period?.current, `${prefix} template.period.current`, errors);
   validateBindingPath(node.template.period?.comparison, `${prefix} template.period.comparison`, errors);
 
-  if (!Array.isArray(node.template.metrics) || node.template.metrics.length < 1) {
-    errors.push(`${prefix} template.metrics must contain at least one item`);
+  if (!Array.isArray(node.template.metrics)) {
+    errors.push(`${prefix} template.metrics must be an array`);
   } else {
     node.template.metrics.forEach((metric, index) => {
       const label = `${prefix} metric ${index + 1}`;
@@ -653,8 +693,22 @@ function validateWorkflowDefinition(definition) {
     }
 
     if (node.type === 'recursive_dimension_breakdown') {
-      if (node.analysis_mode !== undefined && !['sales', 'inventory'].includes(node.analysis_mode)) {
+      if (node.analysis_mode !== undefined && !['sales', 'inventory', 'web_vitals', 'payment_mix', 'discount'].includes(node.analysis_mode)) {
         errors.push(`recursive_dimension_breakdown node ${node.id} has invalid analysis_mode`);
+      }
+      if (node.analysis_mode === 'web_vitals') {
+        const topK = node.web_vitals_top_k ?? 5;
+        if (!Number.isInteger(Number(topK)) || Number(topK) < 1 || Number(topK) > 50) {
+          errors.push(`web vitals breakdown node ${node.id} web_vitals_top_k must be an integer from 1 to 50`);
+        }
+        if (node.output_key !== undefined && (typeof node.output_key !== 'string' || !node.output_key.trim())) {
+          errors.push(`web vitals breakdown node ${node.id} has invalid output_key`);
+        }
+        continue;
+      }
+      if (node.analysis_mode === 'payment_mix' || node.analysis_mode === 'discount') {
+        errors.push(...getMonitorNodeErrors(node));
+        continue;
       }
       if (node.analysis_mode === 'inventory') {
         const topK = node.inventory_top_k ?? 50;

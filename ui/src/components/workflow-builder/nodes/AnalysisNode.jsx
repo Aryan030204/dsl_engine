@@ -23,7 +23,7 @@ export const AnalysisNode = ({ data, isConnectable }) => {
         </div>
         
         <div className="p-3 text-xs text-gray-600">
-            <div className="font-semibold text-blue-700 mb-1">{!isComparison && data.analysis_mode === 'inventory' ? 'Inventory Breakdown' : typeLabel}</div>
+            <div className="font-semibold text-blue-700 mb-1">{!isComparison && data.analysis_mode === 'inventory' ? 'Inventory Breakdown' : !isComparison && data.analysis_mode === 'web_vitals' ? 'Web Vitals Breakdown' : !isComparison && data.analysis_mode === 'payment_mix' ? 'COD Share by Product' : !isComparison && data.analysis_mode === 'discount' ? 'Discount Drill-down' : typeLabel}</div>
             
             {/* Metric Compare View */}
             {isComparison && metrics.length > 0 && (
@@ -42,7 +42,25 @@ export const AnalysisNode = ({ data, isConnectable }) => {
                     <div>Critical ≤ {data.critical_doh_days ?? 7} DOH · Healthy ≥ {data.healthy_doh_days ?? 15} DOH</div>
                 </div>
             )}
-            {!isComparison && data.analysis_mode !== 'inventory' && (
+            {!isComparison && data.analysis_mode === 'web_vitals' && (
+                <div className="space-y-1 text-[10px]">
+                    <div>Top {data.web_vitals_top_k || 5} pages by sessions</div>
+                    <div>Performance score and CVR</div>
+                </div>
+            )}
+            {!isComparison && data.analysis_mode === 'payment_mix' && (
+                <div className="space-y-1 text-[10px]">
+                    <div>{(data.product_ids || []).length} product(s) · min {data.min_orders ?? 20} orders/day</div>
+                    <div>Alert at +{data.overall_threshold_pct ?? 7}% overall · +{data.product_threshold_pct ?? 11}% per product</div>
+                </div>
+            )}
+            {!isComparison && data.analysis_mode === 'discount' && (
+                <div className="space-y-1 text-[10px]">
+                    <div>Rate, usage and discount-vs-sales checks</div>
+                    <div>Drill-down: code, UTM source, campaign</div>
+                </div>
+            )}
+            {!isComparison && data.analysis_mode !== 'inventory' && data.analysis_mode !== 'web_vitals' && data.analysis_mode !== 'payment_mix' && data.analysis_mode !== 'discount' && (
                 <div className="space-y-1">
                     {baseMetrics.length > 0 && (
                         <div className="flex items-center gap-1">

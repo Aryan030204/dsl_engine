@@ -116,7 +116,7 @@ test('a report with nine KPI cards and three tables passes validation and render
   assert.match(rendered.text, /Healthy Products: 1/);
 });
 
-test('there is no limit on KPI cards: any number validates and renders, but at least one is required', () => {
+test('there is no limit on KPI cards: any number, including zero, validates and renders', () => {
   const card = (n) => ({ label: `M${n}`, value: 'metrics.current_sessions', format: 'integer', icon: 'metric' });
   const templateFor = (count) => ({
     preset: 'performance_report_v1', eyebrow: 'E', title: 'T', period: { current: 'meta.window', comparison: 'meta.baselineWindow' },
@@ -134,8 +134,7 @@ test('there is no limit on KPI cards: any number validates and renders, but at l
   for (const count of [1, 9, 10, 25, 60]) {
     assert.ok(!validateWorkflowDefinition(definition(count)).errors.some((e) => /metrics must contain/.test(e)), `${count} cards`);
   }
-  const none = validateWorkflowDefinition(definition(0)).errors.find((e) => /metrics must contain/.test(e));
-  assert.match(none, /at least one item/);
+  assert.ok(!validateWorkflowDefinition(definition(0)).errors.some((e) => /metrics must contain/.test(e)));
 
   // and they all render, in rows of three on desktop
   const context = {
@@ -147,6 +146,8 @@ test('there is no limit on KPI cards: any number validates and renders, but at l
   const rendered = renderEmail({ format: 'report', template: templateFor(25), context, subject: 'R' });
   assert.equal(rendered.html.split('rpt-kpi-card"').length - 1, 25);
   assert.equal((rendered.html.match(/class="rpt-kpi-card" style="[^"]*width:33\.3333%/g) || []).length, 25);
+  const noCards = renderEmail({ format: 'report', template: templateFor(0), context, subject: 'R' });
+  assert.equal(noCards.html.includes('rpt-kpi-card'), false);
 });
 
 test('adding inventory KPIs never duplicates a card and is not limited by how many cards exist', async () => {

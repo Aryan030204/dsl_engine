@@ -130,7 +130,10 @@ function buildPreviousCompleteDayContext(tenantId, triggerTime, payload = {}, ti
   };
 }
 
-function buildDayToDateVsPreviousDayContext(tenantId, triggerTime, payload = {}, timeZone = 'UTC') {
+// `baselineDays` > 1 marks the baseline as "this same time-of-day range on each of the N days before today,
+// averaged" (baselineWindow is the first of those days: yesterday's range). Queries expand it with
+// lib/timeWindowUtils.expandBaselineWindows.
+function buildDayToDateVsPreviousDayContext(tenantId, triggerTime, payload = {}, timeZone = 'UTC', baselineDays = null) {
   const triggerDate = new Date(triggerTime);
   const triggerParts = getTimeZoneParts(triggerDate, timeZone);
   const currentDayStart = startOfDay(triggerDate, timeZone);
@@ -172,7 +175,8 @@ function buildDayToDateVsPreviousDayContext(tenantId, triggerTime, payload = {},
       baselineWindow: {
         start: toIsoUtc(previousDayStart),
         end: toIsoUtc(previousDayCutoff)
-      }
+      },
+      ...(baselineDays > 1 ? { baselineDays } : {})
     },
     filters: payload?.filters || [],
     metrics: payload?.metrics || {},
@@ -181,12 +185,18 @@ function buildDayToDateVsPreviousDayContext(tenantId, triggerTime, payload = {},
   };
 }
 
+const SEVEN_DAY_BASELINE = 7;
+
 function buildCronContext(schedule, triggerTime, payload = {}) {
   const mode = schedule?.windowMode || SCHEDULE_WINDOW_MODES.PREVIOUS_COMPLETE_DAY;
   const timeZone = schedule?.timezone || 'UTC';
 
   if (mode === SCHEDULE_WINDOW_MODES.DAY_TO_DATE_VS_PREVIOUS_DAY) {
     return buildDayToDateVsPreviousDayContext(schedule.tenantId, triggerTime, payload, timeZone);
+  }
+
+  if (mode === SCHEDULE_WINDOW_MODES.DAY_TO_DATE_VS_7DAY_AVERAGE) {
+    return buildDayToDateVsPreviousDayContext(schedule.tenantId, triggerTime, payload, timeZone, SEVEN_DAY_BASELINE);
   }
 
   return buildPreviousCompleteDayContext(schedule.tenantId, triggerTime, payload, timeZone);

@@ -1,22 +1,46 @@
 const queryBuilder = require('../sql/QueryBuilder');
 const queryExecutor = require('../sql/QueryExecutor');
+const { expandBaselineWindows } = require('../lib/timeWindowUtils');
+const { averageBaselineRows, relativeDeltaPct, pct } = require('../lib/baselineAverage');
+
+const COD_FAMILY = new Set(['cod_pct', 'prepaid_pct', 'partial_pct']);
+const DISCOUNT_FAMILY = new Set(['discount_amount', 'gross_sales', 'discounted_orders', 'unique_discount_codes', 'discount_rate', 'usage_rate']);
 
 async function MetricCompareNode(def, context) {
   const requestedMetrics = new Set(Array.isArray(def.metrics) ? def.metrics : []);
   const needsRates = requestedMetrics.has('cvr') || requestedMetrics.has('atc_rate');
   const { window, baselineWindow, tenantId, timezone } = context.meta || {};
 
+  // Day-averaged baseline ("today vs the last N days at the same time of day"): the baseline is the average of
+  // N daily windows. The current window runs once with an empty baseline; each baseline day runs on its own
+  // (empty baseline too, so no window is scanned twice) and the daily rows are averaged below.
+  const baselineDayWindows = expandBaselineWindows(baselineWindow, context.meta?.baselineDays, timezone);
+  const averaged = baselineDayWindows.length > 0;
+  const emptyBaseline = (range) => ({ start: range.start, end: range.start });
+
   // --- 1. Build query specs (intent only) ---
   const querySpec = queryBuilder.buildMetricQuery({
     tenantId,
     metrics: def.metrics,
     window,
-    baselineWindow,
+    baselineWindow: averaged ? emptyBaseline(window) : baselineWindow,
     timezone
   });
 
   // --- 2. Execute queries (execution only) ---
   const result = await queryExecutor.execute(querySpec);
+  let dayResults = [];
+  if (averaged) {
+    dayResults = await Promise.all(baselineDayWindows.map((dayWindow) => queryExecutor.execute(
+      queryBuilder.buildMetricQuery({
+        tenantId,
+        metrics: def.metrics,
+        window: dayWindow,
+        baselineWindow: emptyBaseline(dayWindow),
+        timezone
+      })
+    )));
+  }
 
   // --- 3. Validate results (fail loudly, never guess) ---
   if (
@@ -28,7 +52,10 @@ async function MetricCompareNode(def, context) {
     };
   }
 
-  const row = result.rows[0];
+  let row = result.rows[0];
+  if (averaged) {
+    row = { ...row, ...averageBaselineRows(dayResults.map((dayResult) => dayResult?.rows?.[0] || {})) };
+  }
 
   const {
     current_orders,
@@ -114,6 +141,8 @@ async function MetricCompareNode(def, context) {
   // metricQuery's includeSales). AOV = total sales / orders, both taken from
   // hour_wise_sales so numerator and denominator come from the same source.
   const salesMetrics = row.current_sales === undefined ? {} : deriveSalesMetrics(row);
+  const paymentShareMetrics = deriveCodFamily(row, requestedMetrics, averaged);
+  const discountMetrics = deriveDiscountFamily(row, requestedMetrics);
 
   // --- 5. Return full ground truth (single return, complete facts) ---
   return {
@@ -149,10 +178,80 @@ async function MetricCompareNode(def, context) {
         cod_orders_delta_pct,
         ppcod_orders_delta_pct,
         prepaid_orders_delta_pct,
-        ...salesMetrics
+        ...salesMetrics,
+        ...paymentShareMetrics,
+        ...discountMetrics,
+        ...(averaged ? { baseline_days_seen: row.baseline_days_seen } : {})
       }
     },
     next: def.next
+  };
+}
+
+// COD / prepaid / partial share of orders, in percent. Current = this window's share. Baseline = the average of the
+// daily shares when the baseline is day-averaged (legacy parity), otherwise the baseline window's own share.
+function deriveCodFamily(row, requestedMetrics, averaged) {
+  const wanted = [...COD_FAMILY].filter((metric) => requestedMetrics.has(metric));
+  if (!wanted.length) return {};
+
+  const total = (prefix) => Number(row[`${prefix}_cod_orders`] || 0)
+    + Number(row[`${prefix}_ppcod_orders`] || 0)
+    + Number(row[`${prefix}_prepaid_orders`] || 0);
+  const shareOf = (prefix, field) => pct(Number(row[`${prefix}_${field}`] || 0), total(prefix));
+  const sources = { cod_pct: 'cod_orders', prepaid_pct: 'prepaid_orders', partial_pct: 'ppcod_orders' };
+
+  const out = { current_payment_orders: total('current') };
+  if (!averaged) out.baseline_payment_orders = total('baseline');
+  for (const metric of wanted) {
+    const current = shareOf('current', sources[metric]);
+    const baseline = averaged ? (row[`baseline_${metric}`] ?? null) : shareOf('baseline', sources[metric]);
+    out[`current_${metric}`] = current;
+    out[`baseline_${metric}`] = baseline;
+    out[`${metric}_delta_pct`] = relativeDeltaPct(current, baseline);
+  }
+  return out;
+}
+
+// Discount figures from shopify_orders. Rates are percentages. As in the legacy monitor, the rates are ratios of
+// the (averaged) sums, and the baseline figures are per-day averages.
+function deriveDiscountFamily(row, requestedMetrics) {
+  if (![...DISCOUNT_FAMILY].some((metric) => requestedMetrics.has(metric))) return {};
+
+  const read = (prefix, field) => Number(row[`${prefix}_${field}`] || 0);
+  const figures = (prefix) => ({
+    orders: read(prefix, 'discount_orders'),
+    discountedOrders: read(prefix, 'discounted_orders'),
+    discountAmount: read(prefix, 'discount_amount'),
+    grossSales: read(prefix, 'gross_sales'),
+    uniqueCodes: read(prefix, 'unique_discount_codes')
+  });
+  const current = figures('current');
+  const baseline = figures('baseline');
+  const rate = (f) => pct(f.discountAmount, f.grossSales);
+  const usage = (f) => pct(f.discountedOrders, f.orders);
+
+  const discountAmountDelta = relativeDeltaPct(current.discountAmount, baseline.discountAmount);
+  const grossSalesDelta = relativeDeltaPct(current.grossSales, baseline.grossSales);
+  return {
+    current_total_orders: current.orders,
+    baseline_total_orders: baseline.orders,
+    current_discounted_orders: current.discountedOrders,
+    baseline_discounted_orders: baseline.discountedOrders,
+    current_discount_amount: current.discountAmount,
+    baseline_discount_amount: baseline.discountAmount,
+    current_gross_sales: current.grossSales,
+    baseline_gross_sales: baseline.grossSales,
+    current_unique_discount_codes: current.uniqueCodes,
+    current_discount_rate: rate(current),
+    baseline_discount_rate: rate(baseline),
+    discount_rate_delta_pct: relativeDeltaPct(rate(current), rate(baseline)),
+    current_usage_rate: usage(current),
+    baseline_usage_rate: usage(baseline),
+    usage_rate_delta_pct: relativeDeltaPct(usage(current), usage(baseline)),
+    discount_amount_delta_pct: discountAmountDelta,
+    gross_sales_delta_pct: grossSalesDelta,
+    // how far discounts are growing ahead of sales (both relative changes, in points)
+    discount_vs_sales_gap_pct: discountAmountDelta == null || grossSalesDelta == null ? null : discountAmountDelta - grossSalesDelta
   };
 }
 
