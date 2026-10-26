@@ -1,4 +1,5 @@
 const nodemailer = require('nodemailer');
+const { applyEmailFooter, prepareInlineLogo } = require('../lib/emailFooter');
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const MAX_RECIPIENTS = 25;
@@ -41,6 +42,8 @@ function createTransport() {
 }
 
 async function sendEmail({ to, subject, html, text }) {
+  ({ html, text } = applyEmailFooter({ html, text }));
+  const inlineLogo = prepareInlineLogo(html);
   const recipientsResult = validateRecipients(to);
   if (!recipientsResult.ok) {
     return {
@@ -68,7 +71,8 @@ async function sendEmail({ to, subject, html, text }) {
       from,
       to: recipientsResult.recipients.join(', '),
       subject,
-      html,
+      html: inlineLogo.html,
+      attachments: inlineLogo.attachments,
       text: text || ''
     });
 

@@ -58,7 +58,6 @@ function renderFallback({ decision, workflowName, brandName, branding }) {
     `<div style="font-size:16px;font-weight:bold;color:${resolved.primaryColor};margin-bottom:16px;">${escapeHtml(resolved.displayName)}</div>`,
     `<p style="font-size:15px;color:#0f172a;">${escapeHtml(message)}</p>`,
     `<p style="font-size:14px;color:#334155;">Workflow: <strong>${escapeHtml(name)}</strong>${brandName ? ` · Brand: <strong>${escapeHtml(brandName)}</strong>` : ''}</p>`,
-    `<p style="font-size:12px;color:#94a3b8;margin-top:24px;">${escapeHtml(resolved.footerText)}</p>`,
     '</div></body></html>'
   ].join('');
   const text = [message, '', `Workflow: ${name}${brandName ? ` · Brand: ${brandName}` : ''}`].join('\n');

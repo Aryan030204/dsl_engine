@@ -8,6 +8,7 @@ const {
   formatEvidencePath,
 } = require('../server/lib/insightUtils');
 const { renderInsightEmail } = require('../server/lib/renderInsightEmail');
+const { applyEmailFooter } = require('../server/lib/emailFooter');
 const { sendEmail } = require('../server/services/emailService');
 
 async function InsightNode(def, context, runtime = {}) {
@@ -149,14 +150,14 @@ async function InsightNode(def, context, runtime = {}) {
         error: 'email skipped because configured detail templates rendered empty'
       };
     } else {
-      const renderedEmail = renderInsightEmail({
+      const renderedEmail = applyEmailFooter(renderInsightEmail({
         insight,
         workflowId: context?.workflow_id || context?.meta?.workflowId,
         workflowName: context?.meta?.workflowName,
         brandName: context?.meta?.brandName || context?.meta?.tenantId,
         subjectTemplate: email?.subject,
         tenantId: context?.meta?.tenantId
-      });
+      }));
 
       const emailSender = runtime.emailSender || sendEmail;
       emailResult = await emailSender({
