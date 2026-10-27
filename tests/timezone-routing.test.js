@@ -85,16 +85,16 @@ test('overall metrics use the same timezone-normalized boundaries', () => {
     window: istCurrent,
     baselineWindow: istBaseline,
   });
-  // sessions: current window (date range + exact hour bounds), then baseline
+  // whole local days read the daily summary: sessions then orders, each current window then baseline (start day, end day)
   assert.deepEqual(spec.params.slice(0, 8), [
-    '2026-08-01 00:00:00',
-    '2026-08-02 00:00:00',
-    '2026-08-01 00:00:00',
-    '2026-08-02 00:00:00',
-    '2026-07-31 00:00:00',
-    '2026-08-01 00:00:00',
-    '2026-07-31 00:00:00',
-    '2026-08-01 00:00:00',
+    '2026-08-01',
+    '2026-08-02',
+    '2026-07-31',
+    '2026-08-01',
+    '2026-08-01',
+    '2026-08-02',
+    '2026-07-31',
+    '2026-08-01',
   ]);
 });
 

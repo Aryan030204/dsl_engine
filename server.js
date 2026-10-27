@@ -8,6 +8,7 @@ console.log("Node DNS servers:", dns.getServers());
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
+const compression = require('compression');
 const cookieParser = require('cookie-parser');
 require('dotenv').config();
 
@@ -53,6 +54,8 @@ app.use(cors({
   credentials: true
 }));
 
+// gzip JSON responses (run lists and workflow definitions are large and compress ~10x)
+app.use(compression());
 app.use(express.json({ limit: '2mb' }));
 app.use(cookieParser());
 

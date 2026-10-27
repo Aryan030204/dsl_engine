@@ -10,6 +10,7 @@ const insightNode = require('../nodes/InsightNode');
 const workflowRefNode = require('../nodes/WorkflowRefNode');
 const emailNode = require('../nodes/EmailNode');
 const messagingNode = require('../nodes/MessagingNode');
+const { getQueryStats } = require('../sql/QueryExecutor');
 
 const NodeRegistry = {
   validation: validationNode,
@@ -121,28 +122,41 @@ class WorkflowRunner {
       }
 
       // --- trace ---
-      context.executionTrace.push({
+      const traceEntry = {
         nodeId: currentNodeId,
         type: nodeDef.type,
         workflowIdentity,
         timestamp: new Date().toISOString()
-      });
+      };
+      context.executionTrace.push(traceEntry);
 
       const runtime = this.createNodeRuntime({ nodeMap, workflowIdentity, sharedState });
 
-      const result = nodeDef.type === 'composite'
-        ? await executor(nodeDef, context, { nodeMap, runtime })
-        : nodeDef.type === 'workflow_ref'
-          ? await executor(nodeDef, context, runtime)
-          : nodeDef.type === 'email' || nodeDef.type === 'insight' || nodeDef.type === 'messaging'
+      // How long the node took and how many queries it sent to MySQL (cache hits don't count).
+      const nodeStartedAt = Date.now();
+      const statsBefore = getQueryStats();
+      let result;
+      try {
+        result = nodeDef.type === 'composite'
+          ? await executor(nodeDef, context, { nodeMap, runtime })
+          : nodeDef.type === 'workflow_ref'
             ? await executor(nodeDef, context, runtime)
-          : await executor(nodeDef, context);
+            : nodeDef.type === 'email' || nodeDef.type === 'insight' || nodeDef.type === 'messaging'
+              ? await executor(nodeDef, context, runtime)
+            : await executor(nodeDef, context);
+      } finally {
+        traceEntry.durationMs = Date.now() - nodeStartedAt;
+        const statsAfter = getQueryStats();
+        if (statsBefore && statsAfter) traceEntry.queryCount = statsAfter.queryCount - statsBefore.queryCount;
+      }
 
       if (this.options.onNodeResult) {
         this.options.onNodeResult({
           nodeId: currentNodeId,
           type: nodeDef.type,
           workflowIdentity,
+          durationMs: traceEntry.durationMs,
+          ...(traceEntry.queryCount !== undefined ? { queryCount: traceEntry.queryCount } : {}),
           result
         });
       }

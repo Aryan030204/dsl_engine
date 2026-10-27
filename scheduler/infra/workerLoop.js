@@ -94,19 +94,54 @@ function useRabbitRunQueue() {
   return process.env.SCHEDULER_RUN_QUEUE_BACKEND === 'rabbit';
 }
 
-async function runLoopMongo({ workerId, intervalMs = 2000, stopSignal }) {
-  while (!stopSignal.stopped) {
+// How many runs one worker executes at once (SCHEDULER_WORKER_CONCURRENCY, default 3). Claiming is an
+// atomic findOneAndUpdate, so lanes never take the same run, and runs of one workflow are still
+// serialised by the overlap policy.
+function getWorkerConcurrency() {
+  const value = Math.floor(Number(process.env.SCHEDULER_WORKER_CONCURRENCY));
+  return Number.isFinite(value) && value >= 1 ? Math.min(value, 20) : 3;
+}
+
+// Housekeeping (expired leases, runs past their time limit). It used to run before every 2 s poll;
+// it only needs to run every so often.
+async function runMaintenance() {
+  await recoverExpiredRunningRuns();
+  await failTimedOutRuns();
+}
+
+async function runLoopMongo({
+  workerId, intervalMs = 2000, stopSignal, concurrency = getWorkerConcurrency(), processor = processOne, maintenance = runMaintenance
+}) {
+  const maintenanceTickMs = Number(process.env.SCHEDULER_MAINTENANCE_TICK_MS) || 30000;
+  const maintain = async () => {
     try {
-      await recoverExpiredRunningRuns();
-      await failTimedOutRuns();
-      const result = await processOne(workerId);
-      if (!result) {
+      await maintenance();
+    } catch (error) {
+      console.error('[scheduler-worker] maintenance failed', error.message);
+    }
+  };
+  await maintain();
+  const maintenanceTimer = setInterval(maintain, maintenanceTickMs);
+  if (typeof maintenanceTimer.unref === 'function') maintenanceTimer.unref();
+
+  const lane = async () => {
+    while (!stopSignal.stopped) {
+      try {
+        const result = await processor(workerId);
+        if (!result) {
+          await new Promise(resolve => setTimeout(resolve, intervalMs));
+        }
+      } catch (error) {
+        console.error('[scheduler-worker] iteration failed', error);
         await new Promise(resolve => setTimeout(resolve, intervalMs));
       }
-    } catch (error) {
-      console.error('[scheduler-worker] iteration failed', error);
-      await new Promise(resolve => setTimeout(resolve, intervalMs));
     }
+  };
+
+  try {
+    await Promise.all(Array.from({ length: concurrency }, lane));
+  } finally {
+    clearInterval(maintenanceTimer);
   }
 }
 
@@ -162,6 +197,8 @@ async function runLoop({ workerId, intervalMs = 2000, stopSignal }) {
 
 module.exports = {
   runLoop,
+  runLoopMongo,
+  getWorkerConcurrency,
   processOne,
   processClaimedRun
 };

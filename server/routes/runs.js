@@ -114,7 +114,10 @@ router.post('/:workflowId/runs', async (req, res, next) => {
 router.get('/:workflowId/runs', async (req, res, next) => {
   try {
     const { tenantId, workflowId } = req.params;
+    // The list needs the summary and the context's meta/filters (Rerun); the definition, node
+    // outputs, trace and derived values are ~15 KB per run and only the run page uses them.
     const runs = await WorkflowRun.find({ tenantId, workflowId })
+      .select('-definitionJson -nodeOutputs -executionTrace -metrics -context.breakdowns -context.scratch -context.metrics -context.executionTrace -context.rootCausePath')
       .sort({ startedAt: -1 })
       .limit(20)
       .lean();

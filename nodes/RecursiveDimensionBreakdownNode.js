@@ -9,6 +9,24 @@ const {
   detectOutputKeyMode,
 } = require('../server/constants/workflowOutputKeys');
 
+// How many candidates of a breakdown are followed at once (1 walks them one after another).
+const getBreakdownConcurrency = () => Math.max(1, Math.floor(Number(process.env.BREAKDOWN_CONCURRENCY)) || 4);
+
+// Like Promise.all(items.map(fn)) but with at most `limit` calls running at once; results keep the
+// order of `items`.
+async function mapWithConcurrency(items, limit, fn) {
+  const results = new Array(items.length);
+  let next = 0;
+  const lane = async () => {
+    while (next < items.length) {
+      const index = next++;
+      results[index] = await fn(items[index], index);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, lane));
+  return results;
+}
+
 const PAYMENT_ORDER_METRICS = new Set(['cod_orders', 'ppcod_orders', 'prepaid_orders']);
 
 async function RecursiveDimensionBreakdownNode(def, context) {
@@ -392,7 +410,6 @@ async function runSingleMetricBreakdown(def, context) {
     };
   }
 
-  const evidence = [];
   const inheritedFilters = resolveInheritedFilters({
     inputScope: input_scope,
     inputKey: normalizeOutputKey(input_key),
@@ -412,8 +429,8 @@ async function runSingleMetricBreakdown(def, context) {
    * Recursion axis: filters + depth
    */
   async function recurse(activeFilters, depth, ancestry = []) {
-    if (depth >= max_depth) return;
-    if (depth >= dimensionList.length) return;
+    if (depth >= max_depth) return [];
+    if (depth >= dimensionList.length) return [];
 
     const activeDimension = dimensionList[depth];
 
@@ -443,7 +460,7 @@ async function runSingleMetricBreakdown(def, context) {
       scopedFilters,
       rowCount: result?.rows?.length || 0
     });
-    if (!result?.rows?.length) return;
+    if (!result?.rows?.length) return [];
 
     const candidates = [];
     const dropCounts = {
@@ -487,9 +504,9 @@ async function runSingleMetricBreakdown(def, context) {
     }
 
     if (isPaymentOrderMetric) {
-      if (totalBaselinePaymentOrders === 0 && totalCurrentPaymentOrders === 0) return;
+      if (totalBaselinePaymentOrders === 0 && totalCurrentPaymentOrders === 0) return [];
     } else if (totalBaselineSessions === 0 && totalCurrentSessions === 0) {
-      return;
+      return [];
     }
 
     // ---------- Phase 1: collect candidates ----------
@@ -730,7 +747,7 @@ async function runSingleMetricBreakdown(def, context) {
       candidateCount: candidates.length,
       dropCounts
     });
-    if (!candidates.length) return;
+    if (!candidates.length) return [];
 
     const filteredCandidates = candidates;
 
@@ -787,19 +804,21 @@ async function runSingleMetricBreakdown(def, context) {
     });
 
     // ---------- Phase 3: store evidence + recurse ----------
-    for (const entry of topCandidates) {
-      evidence.push(entry);
-
-      await recurse(
+    // Candidates are followed in parallel (a few at a time), but the evidence keeps the order of a
+    // sequential walk: each candidate, then what was found below it, then the next candidate.
+    const branches = await mapWithConcurrency(topCandidates, getBreakdownConcurrency(), async (entry) => [
+      entry,
+      ...await recurse(
         [...activeFilters, { dimension: activeDimension, value: entry.value }],
         depth + 1,
         entry.path || ancestry
-      );
-    }
+      )
+    ]);
+    return branches.flat();
   }
 
   // Kick off recursion
-  await recurse(filters, 0, []);
+  const evidence = await recurse(filters, 0, []);
 
   const mergedEvidenceMap = new Map();
   for (const entry of evidence) {

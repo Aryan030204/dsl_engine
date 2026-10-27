@@ -81,6 +81,68 @@ function salesCte(name, range) {
   };
 }
 
+// Sessions, add-to-cart sessions and orders for one window.
+//   - whole days (midnight to midnight) -> overall_summary, one row per day (verified to match the
+//     hourly sums and the shopify_orders order count)
+//   - anything else (today until the scheduled hour, the zero-length empty baseline) -> the hourly
+//     table and shopify_orders, because the daily table can't answer "until 14:00"
+// Both CTEs keep the same output columns whichever source is used.
+function sessionsCte(name, range) {
+  if (isFullDayAlignedWindow(range.start, range.end)) {
+    return {
+      source: 'overall_summary',
+      sql: `${name} AS (
+  SELECT
+    COALESCE(SUM(total_sessions), 0) AS sessions,
+    COALESCE(SUM(total_atc_sessions), 0) AS atc_sessions,
+    COALESCE(SUM(adjusted_total_sessions), 0) AS adjusted_sessions
+  FROM overall_summary
+  WHERE date >= ?
+    AND date <  ?
+)`,
+      params: [range.start.slice(0, 10), range.end.slice(0, 10)]
+    };
+  }
+  return {
+    source: 'hourly',
+    sql: `${name} AS (
+  SELECT
+    COALESCE(SUM(number_of_sessions), 0) AS sessions,
+    COALESCE(SUM(number_of_atc_sessions), 0) AS atc_sessions,
+    COALESCE(SUM(adjusted_number_of_sessions), 0) AS adjusted_sessions
+  FROM hourly_sessions_summary_shopify
+  WHERE ${hourlyWhere()}
+)`,
+    params: hourlyParams(range)
+  };
+}
+
+function ordersCte(name, range) {
+  if (isFullDayAlignedWindow(range.start, range.end)) {
+    return {
+      source: 'overall_summary',
+      sql: `${name} AS (
+  SELECT
+    COALESCE(SUM(total_orders), 0) AS orders
+  FROM overall_summary
+  WHERE date >= ?
+    AND date <  ?
+)`,
+      params: [range.start.slice(0, 10), range.end.slice(0, 10)]
+    };
+  }
+  return {
+    source: 'shopify_orders',
+    sql: `${name} AS (
+  SELECT
+    COALESCE(COUNT(DISTINCT order_name), 0) AS orders
+  FROM shopify_orders
+  WHERE ${ordersWhere()}
+)`,
+    params: ordersParams(range.start, range.end)
+  };
+}
+
 module.exports = function metricQuery({ tenantId, metrics = [], window, baselineWindow, timezone }) {
   if (!tenantId) throw new Error('metricQuery: tenantId is required (db selector)');
   if (!window?.start || !window?.end) throw new Error('metricQuery: window.start/window.end required');
@@ -103,36 +165,17 @@ module.exports = function metricQuery({ tenantId, metrics = [], window, baseline
   const currentSales = includeSales ? salesCte('current_sales', normalizedWindow) : null;
   const baselineSales = includeSales ? salesCte('baseline_sales', normalizedBaselineWindow) : null;
 
+  const currentSessions = sessionsCte('current_sessions', normalizedWindow);
+  const baselineSessions = sessionsCte('baseline_sessions', normalizedBaselineWindow);
+  const currentOrders = ordersCte('current_orders', normalizedWindow);
+  const baselineOrders = ordersCte('baseline_orders', normalizedBaselineWindow);
+
   const sql = `
 WITH
-current_sessions AS (
-  SELECT
-    COALESCE(SUM(number_of_sessions), 0) AS sessions,
-    COALESCE(SUM(number_of_atc_sessions), 0) AS atc_sessions,
-    COALESCE(SUM(adjusted_number_of_sessions), 0) AS adjusted_sessions
-  FROM hourly_sessions_summary_shopify
-  WHERE ${hourlyWhere()}
-),
-baseline_sessions AS (
-  SELECT
-    COALESCE(SUM(number_of_sessions), 0) AS sessions,
-    COALESCE(SUM(number_of_atc_sessions), 0) AS atc_sessions,
-    COALESCE(SUM(adjusted_number_of_sessions), 0) AS adjusted_sessions
-  FROM hourly_sessions_summary_shopify
-  WHERE ${hourlyWhere()}
-),
-current_orders AS (
-  SELECT
-    COALESCE(COUNT(DISTINCT order_name), 0) AS orders
-  FROM shopify_orders
-  WHERE ${ordersWhere()}
-),
-baseline_orders AS (
-  SELECT
-    COALESCE(COUNT(DISTINCT order_name), 0) AS orders
-  FROM shopify_orders
-  WHERE ${ordersWhere()}
-)${includePayment ? `,
+${currentSessions.sql},
+${baselineSessions.sql},
+${currentOrders.sql},
+${baselineOrders.sql}${includePayment ? `,
 current_payment_orders AS (
   SELECT
     COALESCE(SUM(payment_type = 'COD'), 0) AS cod_orders,
@@ -237,10 +280,10 @@ CROSS JOIN baseline_sales bsl` : ''};
   `;
 
   const params = [
-    ...hourlyParams(normalizedWindow),
-    ...hourlyParams(normalizedBaselineWindow),
-    ...ordersParams(windowStart, windowEnd),
-    ...ordersParams(baselineStart, baselineEnd),
+    ...currentSessions.params,
+    ...baselineSessions.params,
+    ...currentOrders.params,
+    ...baselineOrders.params,
     // payment-type orders (only when requested): current window, then baseline window
     ...(includePayment ? [...ordersParams(windowStart, windowEnd), ...ordersParams(baselineStart, baselineEnd)] : []),
     // discount figures (only when requested): current window, then baseline window
@@ -256,7 +299,11 @@ CROSS JOIN baseline_sales bsl` : ''};
       tenantId, // db name selector
       type: 'metric',
       metricsRequested: metrics,
-      salesSources: includeSales ? { current: currentSales.source, baseline: baselineSales.source } : null
+      salesSources: includeSales ? { current: currentSales.source, baseline: baselineSales.source } : null,
+      kpiSources: {
+        sessions: { current: currentSessions.source, baseline: baselineSessions.source },
+        orders: { current: currentOrders.source, baseline: baselineOrders.source }
+      }
     }
   };
 };

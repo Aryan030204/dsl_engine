@@ -1,3 +1,4 @@
+const { runWithQueryCache } = require('../../sql/QueryExecutor');
 const WorkflowRun = require('../models/WorkflowRun');
 const Insight = require('../models/Insight');
 const { pruneWorkflowRuns } = require('../lib/retention');
@@ -195,7 +196,7 @@ async function executeRun({ run, runId }) {
   const startedAt = targetRun.startedAt || new Date();
 
   try {
-    const result = await executeWithTimeout(runner.executeWorkflow(targetRun.context), timeoutMs, { isCanceled });
+    const result = await runWithQueryCache(() => executeWithTimeout(runner.executeWorkflow(targetRun.context), timeoutMs, { isCanceled }));
 
     // Cancelled while its last node was running: leave it `canceled`, record nothing, notify no one.
     if (await isCanceled()) throw createRunCanceledError();

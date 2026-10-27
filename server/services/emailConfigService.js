@@ -6,6 +6,7 @@ const { collectRecipients, addRecipient, removeRecipient, normalizeEmail } = req
 const { validateWorkflowDefinition } = require('../validation/workflowDefinition');
 const {
   buildWorkflowVersionQuery,
+  loadLatestDefinitions,
   getVersionTenantId,
   getWorkflowTenantIds
 } = require('./workflowResolverService');
@@ -48,12 +49,7 @@ function createEmailConfigService({ models, onChange = () => {} } = {}) {
 
   async function loadActiveWorkflows() {
     const workflows = await m.Workflow.find({ isActive: true }).lean();
-    const loaded = await Promise.all(workflows.map(async (workflow) => {
-      const version = await m.WorkflowVersion.findOne(
-        buildWorkflowVersionQuery(workflow, workflow.workflowId, workflow.latestVersion)
-      ).lean();
-      return { workflow, definition: version?.definitionJson || null };
-    }));
+    const loaded = await loadLatestDefinitions(workflows, m.WorkflowVersion);
     return loaded.filter((item) => item.definition);
   }
 
