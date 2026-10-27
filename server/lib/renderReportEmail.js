@@ -411,13 +411,11 @@ function renderInventoryReportEmail({ context, template, branding, subject }) {
     <table role="presentation" class="inventory-header" width="100%" cellpadding="0" cellspacing="0" style="background:#effaf4;border-radius:12px;padding:20px;"><tr><td class="inventory-brand-cell"><div style="font-size:21px;font-weight:900;letter-spacing:.16em;color:#111827;">${escapeHtml(brand.displayName.toUpperCase())}</div></td><td class="inventory-date-cell" align="right"><div style="font-size:12px;color:#4b5563;text-transform:uppercase;">Inventory as of</div><div style="font-size:19px;font-weight:800;color:${brand.primaryColor};">${escapeHtml(section.asOf)}</div></td></tr>
       ${copy ? `<tr><td colspan="2" align="center" style="padding-top:20px;">${copy}</td></tr>` : ''}</table>
 ${section.sectionsHtml}
-    <table role="presentation" width="100%" style="margin-top:24px;border-collapse:collapse;"><tr><td align="right" style="font-size:12px;color:#6b7280;">${escapeHtml(brand.footerText)}</td></tr></table>
   </div></body></html>`;
   const text = [
     brand.displayName,
     section.viewModel.title,
-    ...section.textLines,
-    brand.footerText
+    ...section.textLines
   ].join('\n');
   return { subject, html, text, viewModel: section.viewModel };
 }
@@ -454,7 +452,6 @@ function renderReportEmail({ context, template, branding, subject }) {
     ${renderInsight(view.insight, brand.primaryColor)}
     ${view.tables.map((table) => renderTable(table, brand.primaryColor)).join('')}
     ${inventoryBlock}
-    <table role="presentation" width="100%" style="margin-top:26px;border-collapse:collapse;"><tr><td style="font-weight:800;letter-spacing:.15em;">${escapeHtml(brand.displayName.toUpperCase())}</td><td align="right" style="font-size:12px;color:#6b7280;">${escapeHtml(brand.footerText)}</td></tr></table>
   </div></body></html>`;
 
   const text = [
@@ -466,8 +463,6 @@ function renderReportEmail({ context, template, branding, subject }) {
     ...(view.insight ? ['', `Key takeaway: ${view.insight.summary}`] : []),
     ...view.tables.flatMap((table) => ['', table.title, ...(table.rows.length ? table.rows.map((row) => `${row.rank}. ${row.cells.map((cell, index) => `${table.columns[index].label}: ${cell.value}`).join(' | ')}`) : ['No data available'])]),
     ...(inventory ? ['', 'Inventory report', ...inventory.textLines] : []),
-    '',
-    brand.footerText,
   ].filter((line) => line !== undefined && line !== null).join('\n');
 
   // The inventory view model goes under its own key: renderTelegramImage.js treats a top-level

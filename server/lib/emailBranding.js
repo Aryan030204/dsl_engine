@@ -3,7 +3,7 @@ const DEFAULT_EMAIL_BRANDING = Object.freeze({
   logoUrl: '',
   tagline: 'Your data. Decoded.',
   primaryColor: '#66c61c',
-  footerText: 'Powered by Datum Analytics',
+  footerText: 'Powered by Konvert apps',
 });
 
 const HEX_COLOR_RE = /^#[0-9a-fA-F]{6}$/;

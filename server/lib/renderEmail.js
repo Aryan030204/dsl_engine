@@ -1,11 +1,12 @@
 const { renderInsightEmail } = require('./renderInsightEmail');
 const { renderReportEmail } = require('./renderReportEmail');
 const { renderBindingTemplate, resolveBinding } = require('./emailBindings');
+const { applyEmailFooter } = require('./emailFooter');
 
 function renderEmail({ format, template, context, branding, subject }) {
   const renderedSubject = renderBindingTemplate(subject, context);
   if (format === 'report') {
-    return renderReportEmail({ context, template, branding, subject: renderedSubject });
+    return applyEmailFooter(renderReportEmail({ context, template, branding, subject: renderedSubject }));
   }
   if (format === 'insight') {
     const source = template?.insightSource || 'scratch.finalInsight';
@@ -20,7 +21,7 @@ function renderEmail({ format, template, context, branding, subject }) {
       brandName: context?.meta?.brandName,
       tenantId: context?.meta?.tenantId,
     });
-    return { ...rendered, subject: renderedSubject };
+    return applyEmailFooter({ ...rendered, subject: renderedSubject });
   }
   throw new Error(`unsupported email format: ${format}`);
 }

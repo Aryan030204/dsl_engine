@@ -425,7 +425,6 @@ function renderDashboardReportEmail({ context, template, branding, subject }) {
     ${view.tables.map((table, index) => renderTable(table, view.maxShare, c, index)).join('')}
     ${view.inventory ? renderInventory(view.inventory, c) : ''}
     <div style="height:1px;background:${LINE};margin:40px 0 18px;"></div>
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td class="dsh-footer" style="font-size:13px;color:${GRAY};">${escapeHtml(view.timezone)}</td><td class="dsh-footer" align="right" style="font-size:13px;color:${GRAY};">${escapeHtml(view.branding.footerText)}</td></tr></table>
   </div></body></html>`;
 
   const cardLine = (card) => `${card.label}: ${card.value}${card.change == null ? '' : ` (${card.change})`}`;
@@ -445,8 +444,7 @@ function renderDashboardReportEmail({ context, template, branding, subject }) {
       view.inventory.listTitle,
       ...view.inventory.rows.map((product, index) => `${index + 1}. ${product.title} | SKU ${product.sku} | DRR ${product.drr.toFixed(2)} | DOH ${product.doh == null ? '—' : product.doh.toFixed(2)}${index === view.inventory.badgeIndex ? ' | HIGHEST RUN RATE' : ''}`)
     ] : []),
-    '',
-    `${view.timezone} · ${view.branding.footerText}`
+    ''
   ].join('\n');
 
   // The drawn Telegram pages read `tables` (and branding / title). The inventory list is exposed as one more
