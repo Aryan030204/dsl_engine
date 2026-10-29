@@ -284,7 +284,7 @@ test('the plain-text version carries the same content', async () => {
   assert.match(text, /google/);
   assert.match(text, /Inventory health: 49 products/);
   assert.match(text, /Critical: 7 \| Low stock: 9 \| Healthy: 33/);
-  assert.match(text, /3\. Oud Series Perfume \| SKU OUDSERIES_EDP_90ML \| DRR 444\.71 \| DOH 31\.20 \| HIGHEST RUN RATE/);
+  assert.match(text, /3\. Oud Series Perfume \| SKU OUDSERIES_EDP_90ML \| Inventory \S+ \| DRR 444\.71 \| DOH 31\.20 \| HIGHEST RUN RATE/);
   assert.match(text, /Asia\/Kolkata · Powered by Datum Analytics/);
 });
 

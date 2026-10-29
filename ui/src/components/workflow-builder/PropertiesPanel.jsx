@@ -186,12 +186,12 @@ function getTokenContext(text, caret) {
   return { start: openIndex, end: caret, query };
 }
 
-function MetricMultiSelect({ value, onChange, placeholder }) {
+function MetricMultiSelect({ value, onChange, placeholder, options = COMPARE_METRIC_OPTIONS }) {
   const [inputValue, setInputValue] = useState('');
   const [isOpen, setIsOpen] = useState(false);
   const [isFocused, setIsFocused] = useState(false);
   const normalizedValue = Array.isArray(value) ? value : [];
-  const available = COMPARE_METRIC_OPTIONS.filter((m) => !normalizedValue.includes(m));
+  const available = options.filter((m) => !normalizedValue.includes(m));
   const suggestions = inputValue
     ? available.filter((m) => m.startsWith(inputValue.toLowerCase()))
     : available;
@@ -210,7 +210,7 @@ function MetricMultiSelect({ value, onChange, placeholder }) {
     if (e.key === 'Enter' || e.key === ',') {
       e.preventDefault();
       const trimmed = inputValue.trim().toLowerCase();
-      if (COMPARE_METRIC_OPTIONS.includes(trimmed)) {
+      if (options.includes(trimmed)) {
         addMetric(trimmed);
       }
     }
@@ -289,7 +289,7 @@ function MetricMultiSelect({ value, onChange, placeholder }) {
         )}
       </div>
       <div className="text-[10px] text-gray-400">
-        Supported: {COMPARE_METRIC_OPTIONS.join(', ')}
+        Supported: {options.join(', ')}
       </div>
       <div className="text-[10px] text-gray-400">
         Inventory counts (critical, low stock, healthy) are not metrics here. They come from a Dimension Breakdown node set to &ldquo;Inventory coverage&rdquo;.
@@ -1680,6 +1680,7 @@ export default function PropertiesPanel({
                                 onChange(selectedNode.id, nextData);
                               }}
                               placeholder="Add base metric..."
+                              options={METRIC_OPTIONS}
                             />
                             <p className="mt-1 text-[11px] text-gray-400">Each metric gets separate results; delta ranking and filtering run independently per metric.</p>
                      </div>

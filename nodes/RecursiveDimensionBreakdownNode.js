@@ -1,6 +1,6 @@
 const queryBuilder = require('../sql/QueryBuilder');
 const queryExecutor = require('../sql/QueryExecutor');
-const { summarizeSkus } = require('../lib/inventorySkus');
+const { summarizeDohSku } = require('../lib/inventorySkus');
 const redisSales = require('../lib/redisSales');
 const { runCodProductMonitor } = require('./monitors/codProductMonitor');
 const { runDiscountMonitor } = require('./monitors/discountMonitor');
@@ -238,13 +238,16 @@ async function runInventoryBreakdown(def, context) {
 
   const mapRow = (row) => {
     const doh = row.doh_7d == null ? null : Number(row.doh_7d);
+    // With a worst (lowest-DOH selling) variant, the row's numbers are that variant's own, not the product total.
+    const worst = row.doh_sku ? row : null;
+    const pick = (worstValue, total) => (worst && worstValue != null && worstValue !== '' ? Number(worstValue) : Number(total || 0));
     return {
       product_id: String(row.product_id),
       product_title: row.product_title || 'Untitled product',
-      sku: summarizeSkus(row.sku, row.sku_count),
-      inventory_available: Number(row.inventory_available || 0),
-      sold_units_7d: Number(row.sold_units_7d || 0),
-      drr_7d: Number(row.drr_7d || 0),
+      sku: summarizeDohSku(row.doh_sku, row.sku, row.sku_count),
+      inventory_available: pick(row.worst_inventory_available, row.inventory_available),
+      sold_units_7d: pick(row.worst_sold_units_7d, row.sold_units_7d),
+      drr_7d: pick(row.worst_drr_7d, row.drr_7d),
       doh_7d: doh,
       status: doh == null ? 'No recent sales'
         : doh <= criticalThreshold ? 'Critical'

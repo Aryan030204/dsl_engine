@@ -199,7 +199,8 @@ function WorkflowBuilderContent({
         // (If we had specific handles for steps, we would check here. 
         // For now, if source is composite and target is not 'final', we might assume...)
         
-        // Replace the handle's previous connection (see removeSupersededEdges)
+        // A normal output can connect to several nodes (the new line is added); a branch rule / default
+        // path leads to one node, so its previous line is replaced (see removeSupersededEdges)
         setEdges((eds) => addEdge(newEdge, removeSupersededEdges(eds, newEdge)));
         setHasUnsavedChanges(true);
     },
@@ -450,8 +451,13 @@ function WorkflowBuilderContent({
 
   const canSave = canSaveWorkflow({ isEditing, isDirty: hasUnsavedChanges, allowSaveWithoutChanges });
 
+  // A save that is still in flight must not be started again (double click, or "Save changes" followed by
+  // "Save and leave"): the second request would ask for the same new version number and be rejected.
+  const saveInFlightRef = useRef(false);
+
   const handleSave = async () => {
-    if (!canSave) return false;
+    if (!canSave || saveInFlightRef.current) return false;
+    saveInFlightRef.current = true;
     try {
       const workflowJson = graphToJson(nodes, edges, metadata);
       // Rewrites a state_config saved in an older shape (direction/recovery) to the
@@ -484,6 +490,8 @@ function WorkflowBuilderContent({
       console.error(error);
       toast.error('Failed to generate workflow JSON');
       return false;
+    } finally {
+      saveInFlightRef.current = false;
     }
   };
 

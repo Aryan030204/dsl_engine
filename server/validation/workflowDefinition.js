@@ -499,11 +499,53 @@ function validateStateConfig(definition, errors) {
 
 const DEFAULT_INVENTORY_OUTPUT_KEY = 'inventory_top_products';
 
+// A node's `next` is one node id, or a list of ids when the run fans out to several nodes (each listed node
+// runs). A list must name existing nodes, other than the node itself, without repeats.
+const MAX_FAN_OUT = 10;
+
+function getNextPointerErrors(definition) {
+  const errors = [];
+  const nodes = Array.isArray(definition?.nodes) ? definition.nodes.filter((node) => node && typeof node === 'object') : [];
+  const ids = new Set(nodes.map((node) => node.id));
+  for (const node of nodes) {
+    if (node.next === undefined || node.next === null) continue;
+    if (typeof node.next === 'string') continue;
+    if (!Array.isArray(node.next)) {
+      errors.push(`node ${node.id} next must be a node id or a list of node ids`);
+      continue;
+    }
+    if (node.type === 'branch') {
+      errors.push(`branch node ${node.id} routes through its rules and default path, not next`);
+      continue;
+    }
+    if (node.next.length === 0) {
+      errors.push(`node ${node.id} next must list at least one node id`);
+      continue;
+    }
+    if (node.next.length > MAX_FAN_OUT) {
+      errors.push(`node ${node.id} next can connect to at most ${MAX_FAN_OUT} nodes`);
+    }
+    if (node.next.some((target) => typeof target !== 'string' || target.trim() === '')) {
+      errors.push(`node ${node.id} next must only contain node ids`);
+      continue;
+    }
+    if (new Set(node.next).size !== node.next.length) {
+      errors.push(`node ${node.id} next lists the same node more than once`);
+    }
+    for (const target of node.next) {
+      if (target === node.id) errors.push(`node ${node.id} cannot connect to itself`);
+      else if (!ids.has(target)) errors.push(`node ${node.id} connects to unknown node ${target}`);
+    }
+  }
+  return errors;
+}
+
 // Where a node can send the run next: its next pointer, a branch's rule and default targets, and
 // a composite's steps (which run inside it).
 function successorIds(node) {
   const ids = [];
-  if (node?.next) ids.push(node.next);
+  if (Array.isArray(node?.next)) ids.push(...node.next);
+  else if (node?.next) ids.push(node.next);
   (Array.isArray(node?.rules) ? node.rules : []).forEach((rule) => { if (rule?.then) ids.push(rule.then); });
   if (node?.default?.then) ids.push(node.default.then);
   if (Array.isArray(node?.steps)) ids.push(...node.steps);
@@ -612,6 +654,7 @@ function validateWorkflowDefinition(definition) {
   }
 
   validateStateConfig(definition, errors);
+  errors.push(...getNextPointerErrors(definition));
 
   const nodeIds = new Set();
   for (const node of definition.nodes) {

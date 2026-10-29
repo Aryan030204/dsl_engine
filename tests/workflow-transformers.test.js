@@ -39,19 +39,42 @@ test('saving a graph and loading it back keeps every connection', async () => {
   assert.equal(nodeOf(saved, 'comp').next, 'a');
 });
 
-test('drawing a new connection from a node that already has one saves the NEW target', async () => {
+test('drawing a second connection from a node ADDS it: the node now fans out to both targets', async () => {
   const { jsonToGraph, graphToJson } = global.__t;
   const original = definition();
   const { nodes, edges } = jsonToGraph(original);
 
   const redrawn = draw(edges, { id: 'a-c', source: 'a', target: 'c', type: 'deletable' });
-  assert.equal(redrawn.filter((edge) => edge.source === 'a').length, 1, 'the old a -> b line is replaced, not kept');
-  assert.equal(nodeOf(graphToJson(nodes, redrawn, original), 'a').next, 'c');
+  assert.equal(redrawn.filter((edge) => edge.source === 'a').length, 2, 'the old a -> b line is kept');
+  assert.deepEqual(nodeOf(graphToJson(nodes, redrawn, original), 'a').next, ['b', 'c']);
 
-  // and it survives the reload that follows a save
+  // and both survive the reload that follows a save
   const reloaded = jsonToGraph(graphToJson(nodes, redrawn, original));
   assert.ok(reloaded.edges.some((edge) => edge.source === 'a' && edge.target === 'c'));
-  assert.ok(!reloaded.edges.some((edge) => edge.source === 'a' && edge.target === 'b'));
+  assert.ok(reloaded.edges.some((edge) => edge.source === 'a' && edge.target === 'b'));
+});
+
+test('drawing the same connection twice does not duplicate it, and a single connection still saves as one id', async () => {
+  const { jsonToGraph, graphToJson } = global.__t;
+  const original = definition();
+  const { nodes, edges } = jsonToGraph(original);
+
+  const again = draw(edges, { id: 'a-b-again', source: 'a', target: 'b', type: 'deletable' });
+  assert.equal(again.filter((edge) => edge.source === 'a').length, 1);
+  assert.equal(nodeOf(graphToJson(nodes, again, original), 'a').next, 'b', 'one target is saved as a plain id, as before');
+});
+
+test('removing one of several connections leaves the others (back to a single id when one is left)', async () => {
+  const { jsonToGraph, graphToJson } = global.__t;
+  const original = definition();
+  original.nodes[0].next = ['b', 'c'];
+  const { nodes, edges } = jsonToGraph(original);
+  assert.equal(edges.filter((edge) => edge.source === 'a').length, 2);
+
+  const afterDelete = edges.filter((edge) => !(edge.source === 'a' && edge.target === 'b'));
+  assert.equal(nodeOf(graphToJson(nodes, afterDelete, original), 'a').next, 'c');
+  const noneLeft = afterDelete.filter((edge) => edge.source !== 'a');
+  assert.equal('next' in nodeOf(graphToJson(nodes, noneLeft, original), 'a'), false);
 });
 
 test('re-pointing a branch rule or the default path saves the new target', async () => {
@@ -81,7 +104,7 @@ test('connecting a different handle or a different node does not disturb existin
   assert.equal(nodeOf(saved, 'br').rules[0].then, 'b');
 });
 
-test('a composite keeps its step lines when its next connection is redrawn', async () => {
+test('a composite keeps its step lines when another next connection is added', async () => {
   const { jsonToGraph, graphToJson } = global.__t;
   const original = definition();
   const { nodes, edges } = jsonToGraph(original);
@@ -89,17 +112,17 @@ test('a composite keeps its step lines when its next connection is redrawn', asy
   const redrawn = draw(edges, { id: 'comp-c', source: 'comp', target: 'c', type: 'deletable' });
   const saved = graphToJson(nodes, redrawn, original);
   assert.deepEqual(nodeOf(saved, 'comp').steps, ['b', 'c'], 'steps untouched');
-  assert.equal(nodeOf(saved, 'comp').next, 'c', 'next replaced');
+  assert.deepEqual(nodeOf(saved, 'comp').next, ['a', 'c'], 'next now fans out to both');
 });
 
-test('if duplicate connections exist anyway, the newest one is what gets saved', async () => {
+test('a repeated line is saved once, and for a branch rule the newest line is what gets saved', async () => {
   const { jsonToGraph, graphToJson } = global.__t;
   const original = definition();
   const { nodes, edges } = jsonToGraph(original);
 
-  // an editor draft (or older bug) that holds both lines, oldest first
-  const duplicated = [...edges, { id: 'a-c', source: 'a', target: 'c', type: 'deletable' }];
-  assert.equal(nodeOf(graphToJson(nodes, duplicated, original), 'a').next, 'c');
+  // an editor draft that holds the same line twice
+  const duplicated = [...edges, { id: 'a-b-2', source: 'a', target: 'b', type: 'deletable' }];
+  assert.equal(nodeOf(graphToJson(nodes, duplicated, original), 'a').next, 'b');
 
   const ruleDup = [...edges, { id: 'rule-c', source: 'br', sourceHandle: 'handle-rule-r1', target: 'c', type: 'deletable' }];
   assert.equal(nodeOf(graphToJson(nodes, ruleDup, original), 'br').rules[0].then, 'c');

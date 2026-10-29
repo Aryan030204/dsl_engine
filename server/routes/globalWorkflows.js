@@ -10,6 +10,7 @@ function generateWorkflowId() {
 }
 
 const { resolveScopeChange, applyScopeChange } = require('../services/workflowScopeService');
+const { saveNewVersion } = require('../services/workflowVersionService');
 
 const router = express.Router();
 
@@ -121,20 +122,18 @@ router.post('/:workflowId/versions', async (req, res, next) => {
 
     const version = definition.version;
 
-    await WorkflowVersion.create({
-      tenantId: null,
-      tenantIds: [],
-      scope: 'global',
-      workflowId,
+    await saveNewVersion({
+      workflow,
       version,
-      definitionJson: definition
+      name: definition.name,
+      versionFields: {
+        tenantId: null,
+        tenantIds: [],
+        scope: 'global',
+        workflowId,
+        definitionJson: definition
+      }
     });
-
-    workflow.latestVersion = version;
-    if (definition.name) {
-      workflow.name = definition.name;
-    }
-    await workflow.save();
 
     res.status(201).json({ version });
   } catch (err) {

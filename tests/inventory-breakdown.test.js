@@ -96,3 +96,29 @@ test('the inventory query refuses to run without a tenant instead of falling bac
   assert.throws(() => queryBuilder.buildInventoryProductQuery({ tenantId: undefined }), /tenantId is required/);
   assert.throws(() => queryBuilder.buildInventoryProductQuery({ tenantId: '' }), /tenantId is required/);
 });
+
+test('a multi-variant product shows the SKU that sets its DOH, the others only counted', () => {
+  const { summarizeDohSku } = require('../lib/inventorySkus');
+  assert.equal(summarizeDohSku('TMC-1', 'TMC-1, TMC-2, TMC-3', 3), 'TMC-1');
+  assert.equal(summarizeDohSku('TMC-1', 'TMC-1', 1), 'TMC-1');
+  assert.equal(summarizeDohSku(null, 'A, B', 2), 'A, B', 'no selling variant: plain list');
+  assert.equal(summarizeDohSku('', '', 0), '—');
+});
+
+test('a product row carries the worst variant\'s own DRR, DOH and stock, not the product total', async () => {
+  const row = { product_id: 9, product_title: 'Vitamin C', sku: 'A, B, C', sku_count: 3, doh_sku: 'B',
+    inventory_available: 500, sold_units_7d: 700, drr_7d: 100, doh_7d: 0,
+    worst_inventory_available: '0', worst_sold_units_7d: '70', worst_drr_7d: '10' };
+  const original = queryExecutor.execute;
+  queryExecutor.execute = async () => ({ rows: [row] });
+  try {
+    const node = require('../nodes/RecursiveDimensionBreakdownNode');
+    const run = node.execute || node.run || node;
+    const result = await (typeof run === 'function' ? run : run.execute).call(node, { id: 'inv', type: 'recursive_dimension_breakdown', analysis_mode: 'inventory', top_k: 5 },
+      { meta: { tenantId: 'T' }, metrics: {}, breakdowns: {}, scratch: {} });
+    const product = result.delta.scratch.inventoryReport.products[0];
+    assert.equal(product.sku, 'B');
+    assert.equal(product.drr_7d, 10);
+    assert.equal(product.inventory_available, 0);
+  } finally { queryExecutor.execute = original; }
+});

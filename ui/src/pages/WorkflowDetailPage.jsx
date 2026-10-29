@@ -802,7 +802,7 @@ export default function WorkflowDetailPage() {
                       <p className="text-sm text-gray-500">Type: {node.type}</p>
                     </div>
                     {node.next && (
-                      <span className="text-xs text-gray-400">→ {node.next}</span>
+                      <span className="text-xs text-gray-400">→ {Array.isArray(node.next) ? node.next.join(', ') : node.next}</span>
                     )}
                   </div>
                 ))}

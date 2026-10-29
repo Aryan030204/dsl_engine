@@ -88,6 +88,8 @@ function buildCard(item, context, currency) {
   };
 }
 
+const formatStock = (value) => (value == null || !Number.isFinite(value) ? '—' : Math.round(value).toLocaleString('en-US'));
+
 function buildInventory(template, context) {
   const config = template.inventory;
   if (!config || config.enabled !== true) return null;
@@ -98,6 +100,7 @@ function buildInventory(template, context) {
   const listed = (Array.isArray(report.lowest_doh_products) ? report.lowest_doh_products : []).map((product) => ({
     title: product.product_title,
     sku: product.sku,
+    stock: product.inventory_available == null ? null : Number(product.inventory_available),
     drr: Number(product.drr_7d || 0),
     doh: product.doh_7d == null ? null : Number(product.doh_7d),
     status: product.status
@@ -400,18 +403,19 @@ function renderInventory(inventory, c) {
       const base = `padding:16px 0;${last ? '' : `border-bottom:1px solid ${LINE};`}`;
       return `<tr>`
         + `<td valign="middle" style="${base}"><div class="dsh-prod-name" style="font-size:17.5px;line-height:1.25;font-weight:700;color:${INK};word-break:break-word;">${escapeHtml(product.title)}${badge}</div><div style="margin-top:4px;font-size:12.7px;color:${GRAY};word-break:break-word;">${escapeHtml(product.sku)}</div></td>`
+        + `<td class="dsh-drr" align="right" valign="middle" style="${base}padding-left:10px;font-size:17px;font-weight:400;color:${INK};white-space:nowrap;">${escapeHtml(formatStock(product.stock))}</td>`
         + `<td class="dsh-drr" align="right" valign="middle" style="${base}padding-left:10px;font-size:17px;font-weight:${isBadge ? 800 : 400};color:${INK};white-space:nowrap;">${escapeHtml(product.drr.toFixed(2))}</td>`
         + `<td class="dsh-doh" align="right" valign="middle" style="${base}padding-left:10px;font-size:26px;line-height:1.1;font-weight:900;color:${colors.text};white-space:nowrap;">${escapeHtml(product.doh == null ? '—' : product.doh.toFixed(2))}</td>`
         + `</tr>`;
     }).join('')
-    : `<tr><td colspan="3" align="center" style="padding:22px;font-size:13px;color:${GRAY};">No products with a calculable DOH were found.</td></tr>`;
+    : `<tr><td colspan="4" align="center" style="padding:22px;font-size:13px;color:${GRAY};">No products with a calculable DOH were found.</td></tr>`;
   const th = (label, align, width) => `<th class="dsh-th" align="${align}" width="${width}%" style="width:${width}%;padding:10px 0 10px ${align === 'right' ? 10 : 0}px;border-bottom:1px solid ${LINE};font-size:12px;font-weight:600;letter-spacing:.08em;color:${GRAY};text-transform:uppercase;white-space:nowrap;">${label}</th>`;
   return `<div style="height:1px;background:${LINE};margin:18px 0 30px;"></div>`
     + `<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td style="font-size:15.5px;font-weight:900;letter-spacing:.1em;text-transform:uppercase;color:${INK};">${escapeHtml(inventory.title)}</td><td align="right" style="font-size:14px;color:${GRAY};white-space:nowrap;">${escapeHtml(inventory.analyzed)} products</td></tr></table>`
     + renderSegments(inventory)
     + renderCounts(inventory)
     + `<div style="margin:34px 0 4px;font-size:15px;font-weight:800;color:${RED_TEXT};">${escapeHtml(inventory.listTitle)}</div>`
-    + `<table class="dsh-table" role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;table-layout:fixed;"><thead><tr>${th('Product', 'left', 70)}${th('DRR · 7D', 'right', 14.4)}${th('DOH · 7D', 'right', 15.6)}</tr></thead><tbody>${rows}</tbody></table>`;
+    + `<table class="dsh-table" role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;table-layout:fixed;"><thead><tr>${th('Product', 'left', 52)}${th('Inventory', 'right', 16)}${th('DRR · 7D', 'right', 15)}${th('DOH · 7D', 'right', 17)}</tr></thead><tbody>${rows}</tbody></table>`;
 }
 
 function renderDashboardReportEmail({ context, template, branding, subject }) {
@@ -442,7 +446,7 @@ function renderDashboardReportEmail({ context, template, branding, subject }) {
       `${view.inventory.title}: ${view.inventory.analyzed} products`,
       `Critical: ${view.inventory.critical} | Low stock: ${view.inventory.low} | Healthy: ${view.inventory.healthy}`,
       view.inventory.listTitle,
-      ...view.inventory.rows.map((product, index) => `${index + 1}. ${product.title} | SKU ${product.sku} | DRR ${product.drr.toFixed(2)} | DOH ${product.doh == null ? '—' : product.doh.toFixed(2)}${index === view.inventory.badgeIndex ? ' | HIGHEST RUN RATE' : ''}`)
+      ...view.inventory.rows.map((product, index) => `${index + 1}. ${product.title} | SKU ${product.sku} | Inventory ${formatStock(product.stock)} | DRR ${product.drr.toFixed(2)} | DOH ${product.doh == null ? '—' : product.doh.toFixed(2)}${index === view.inventory.badgeIndex ? ' | HIGHEST RUN RATE' : ''}`)
     ] : []),
     ''
   ].join('\n');
@@ -452,10 +456,10 @@ function renderDashboardReportEmail({ context, template, branding, subject }) {
   const inventoryTable = view.inventory ? [{
     title: view.inventory.listTitle,
     tone: 'negative',
-    columns: ['Product', 'SKU', 'DRR (7 days)', 'DOH (7 days)'].map((label) => ({ label })),
+    columns: ['Product', 'SKU', 'Inventory', 'DRR (7 days)', 'DOH (7 days)'].map((label) => ({ label })),
     rows: view.inventory.rows.map((product, index) => ({
       rank: index + 1,
-      cells: [product.title, product.sku, product.drr.toFixed(2), product.doh == null ? '—' : product.doh.toFixed(2)]
+      cells: [product.title, product.sku, formatStock(product.stock), product.drr.toFixed(2), product.doh == null ? '—' : product.doh.toFixed(2)]
         .map((value) => ({ value: String(value ?? ''), numericValue: null, format: 'text' }))
     }))
   }] : [];

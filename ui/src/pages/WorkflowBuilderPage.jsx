@@ -6,6 +6,7 @@ import { workflowApi } from '../api/endpoints';
 import { useTenant } from '../context/TenantContext';
 import { useUnsavedChangesNavigation } from '../context/UnsavedChangesContext';
 import { buildImportWorkflowOptions } from '../utils/importWorkflows';
+import { nextWorkflowVersion } from '../utils/workflowVersion';
 import toast from 'react-hot-toast';
 
 const NEW_WORKFLOW_TEMPLATE = {
@@ -200,9 +201,11 @@ export default function WorkflowBuilderPage() {
       if (isEditing) {
         // Creating a new version
         // We probably want to auto-increment version number if not handled by backend or user
-        const currentVersion = workflowData?.version?.definitionJson?.version || '1.0';
-        const versionParts = currentVersion.split('.');
-        const newVersion = `${versionParts[0]}.${parseInt(versionParts[1] || 0) + 1}`;
+        const newVersion = nextWorkflowVersion({
+          latestVersion: workflowData?.workflow?.latestVersion,
+          definitionVersion: workflowData?.version?.definitionJson?.version,
+          versions: Array.isArray(workflowVersions) ? workflowVersions : []
+        });
         
         workflowJson.version = newVersion;
         // Ensure workflow_id matches
