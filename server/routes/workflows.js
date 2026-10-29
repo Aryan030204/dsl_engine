@@ -19,6 +19,7 @@ function generateWorkflowId() {
 }
 
 const { resolveScopeChange, applyScopeChange } = require('../services/workflowScopeService');
+const { saveNewVersion } = require('../services/workflowVersionService');
 const router = express.Router({ mergeParams: true });
 
 function normalizeTriggerDefinition(definition, tenantId, scope = 'tenant') {
@@ -178,21 +179,18 @@ router.post('/:workflowId/versions', async (req, res, next) => {
     const workflow = await Workflow.findOne(buildTenantWorkflowQuery(tenantId, workflowId));
     if (!workflow) return res.status(404).json({ error: 'workflow not found' });
 
-    await WorkflowVersion.create({
-      tenantId: getVersionTenantId(workflow),
-      scope: workflow.scope || 'tenant',
-      tenantIds: getWorkflowTenantIds(workflow),
-      workflowId,
+    await saveNewVersion({
+      workflow,
       version,
-      definitionJson: definition
+      name: definition.name,
+      versionFields: {
+        tenantId: getVersionTenantId(workflow),
+        scope: workflow.scope || 'tenant',
+        tenantIds: getWorkflowTenantIds(workflow),
+        workflowId,
+        definitionJson: definition
+      }
     });
-
-    workflow.latestVersion = version;
-    // Keep display name in sync with the latest definition name (if provided)
-    if (definition.name) {
-      workflow.name = definition.name;
-    }
-    await workflow.save();
 
     res.status(201).json({ version });
   } catch (err) {

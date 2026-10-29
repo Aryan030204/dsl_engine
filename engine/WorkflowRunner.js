@@ -23,6 +23,64 @@ const NodeRegistry = {
   messaging: messagingNode
 };
 
+// A node's `next` is one node id, or a list of ids (the run fans out: every listed node runs). These helpers read
+// the static graph the runner schedules from.
+function normalizeTargets(value) {
+  const list = Array.isArray(value) ? value : [value];
+  return [...new Set(list.filter((id) => typeof id === 'string' && id.trim() !== ''))];
+}
+
+// Every node a node can hand the run to: its next target(s) and a branch's rule / default targets.
+function staticSuccessors(node) {
+  const ids = [...normalizeTargets(node?.next)];
+  (Array.isArray(node?.rules) ? node.rules : []).forEach((rule) => ids.push(...normalizeTargets(rule?.then)));
+  ids.push(...normalizeTargets(node?.default?.then));
+  return [...new Set(ids)];
+}
+
+function buildPredecessorMap(nodeMap) {
+  const predecessors = new Map();
+  Object.values(nodeMap).forEach((node) => {
+    staticSuccessors(node).forEach((target) => {
+      if (!predecessors.has(target)) predecessors.set(target, new Set());
+      predecessors.get(target).add(node.id);
+    });
+  });
+  return predecessors;
+}
+
+// Everything that can still run after (and including) the given nodes.
+function reachableFrom(startIds, nodeMap) {
+  const seen = new Set();
+  const stack = [...startIds];
+  while (stack.length) {
+    const id = stack.pop();
+    if (seen.has(id)) continue;
+    seen.add(id);
+    if (nodeMap[id]) stack.push(...staticSuccessors(nodeMap[id]));
+  }
+  return seen;
+}
+
+// Picks the next waiting node to run. A node that several branches lead into (a join, e.g. one report built from
+// two branches) must wait until every branch that can still reach it has finished; otherwise it would run
+// after the first branch only and miss the other branch's results.
+function takeNextReady(queue, executed, predecessors, nodeMap) {
+  for (let index = 0; index < queue.length; index += 1) {
+    const candidate = queue[index];
+    const others = queue.filter((id) => id !== candidate);
+    const stillComing = reachableFrom(others, nodeMap);
+    const waitingOn = [...(predecessors.get(candidate) || [])]
+      .some((predecessor) => !executed.has(predecessor) && stillComing.has(predecessor));
+    if (!waitingOn) {
+      queue.splice(index, 1);
+      return candidate;
+    }
+  }
+  // Nothing is clear to run (should not happen in an acyclic workflow): run the first one rather than hang.
+  return queue.shift();
+}
+
 const DEFAULT_MAX_EXECUTION_STEPS = 100;
 const DEFAULT_MAX_WORKFLOW_REF_DEPTH = 8;
 
@@ -76,7 +134,11 @@ class WorkflowRunner {
     }
 
     const nodeMap = this.buildNodeMap(workflowDefinition.nodes);
-    let currentNodeId = workflowDefinition.nodes[0].id;
+    // Nodes waiting to run, in order. The run starts at the first node; a node with several `next` targets adds
+    // all of them, so every branch runs (one after another, in the listed order, each to its end before the
+    // next starts unless they join).
+    const queue = [workflowDefinition.nodes[0].id];
+    const predecessors = buildPredecessorMap(nodeMap);
     const visited = new Set();
     const { workflowIdentity, sharedState } = frame;
 
@@ -88,7 +150,8 @@ class WorkflowRunner {
     // --- execution trace ---
     context.executionTrace = context.executionTrace || [];
 
-    while (currentNodeId) {
+    while (queue.length) {
+      const currentNodeId = takeNextReady(queue, visited, predecessors, nodeMap);
       // Stop between nodes once the run's time limit has passed (see lib/runTimeout.js).
       if (this.options.deadlineAt && Date.now() > this.options.deadlineAt) {
         throw createRunTimeoutError(this.options.timeoutMs || 0);
@@ -180,8 +243,17 @@ class WorkflowRunner {
         mergeContext(context, result.delta);
       }
 
-      // --- move execution pointer ---
-      currentNodeId = result.next || null;
+      // --- schedule the next node(s) ---
+      // Targets go to the FRONT of the queue (in order) so a branch is followed to its end before the
+      // next branch starts. A target already waiting is not queued twice (that is how branches join).
+      const targets = normalizeTargets(result.next);
+      for (const target of targets) {
+        if (visited.has(target)) {
+          throw new Error(`Workflow cycle detected at node: ${target}`);
+        }
+      }
+      const fresh = targets.filter((target) => !queue.includes(target));
+      queue.unshift(...fresh);
     }
 
     return {

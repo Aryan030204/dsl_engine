@@ -580,6 +580,26 @@ Binding and runtime behavior:
 - Dedicated email subjects render exactly as configured; legacy insight emails keep their tenant prefix
 - Branding precedence is node override, then tenant `settings.emailBranding`, then platform defaults
 
+
+## Connecting one node to several nodes (fan-out)
+
+A node's `next` is one node id, or a list of ids:
+
+```json
+{ "id": "metrics", "type": "metric_compare", "metrics": ["sessions"], "next": ["utm_report", "inventory_report"] }
+```
+
+- **Every listed node runs.** They run one after another in the listed order, not at the same time, and each branch is
+  followed to its end before the next one starts.
+- **Joining.** If several branches lead into the same node, that node runs once, after every branch that can still
+  reach it has finished (for example one email that shows results from two branches).
+- **One shared context.** The branches share the run's context, so a later branch can read what an earlier one produced.
+- **Failures.** A failing branch fails the run, and a `terminate` on_fail ends the whole run, the same as in a single chain.
+- Limits: at most 10 targets per node; no repeats, no self-reference, and every id must be a node in the workflow.
+  A branch (`type: branch`) still routes through its rules and default path, one target each, not through `next`.
+- In the builder, draw another line from the same node to add a target; delete a line to remove one. A single line
+  is still saved as a plain id.
+
 ## 6. `on_fail` Semantics
 
 Nodes can define:

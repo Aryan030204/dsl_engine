@@ -17,16 +17,34 @@ export const isCompositeStepEdge = (edge) =>
 
 const handleOf = (edge) => edge?.sourceHandle || null;
 
+// A branch rule / the default path leads to exactly one node. Every other output (a node's `next`) can lead to several.
+const isSingleTargetHandle = (handle) => typeof handle === 'string'
+  && (handle.startsWith('handle-rule-') || handle === 'handle-default');
+
 /**
- * A node has ONE `next`, and a branch rule / default path ONE target, so drawing a new connection from
- * a handle that already has one replaces it. Without this the editor kept both lines, but saving only
- * wrote the first one, so the new connection disappeared when the editor reloaded after the save.
+ * Called before a new connection is added. A node's normal output can connect to several nodes (the run fans
+ * out to all of them), so a new line is ADDED; only an identical line (same source and target) is replaced so
+ * it is never drawn twice. A branch rule or the default path leads to ONE node, so a new line from one of those
+ * handles replaces its previous line. Without that the editor kept both lines, but saving only wrote one, so
+ * the new connection disappeared when the editor reloaded after the save.
  */
-export const removeSupersededEdges = (edges, newEdge) => edges.filter((edge) => !(
-  edge.source === newEdge.source
-  && handleOf(edge) === handleOf(newEdge)
-  && !isCompositeStepEdge(edge)
-));
+export const removeSupersededEdges = (edges, newEdge) => edges.filter((edge) => {
+  if (edge.source !== newEdge.source || isCompositeStepEdge(edge)) return true;
+  if (handleOf(edge) !== handleOf(newEdge)) return true;
+  if (isSingleTargetHandle(handleOf(newEdge))) return false;
+  return edge.target !== newEdge.target;
+});
+
+// A node's `next` as an array of ids (it is one id, or a list when the run fans out).
+const nextTargets = (next) => (Array.isArray(next) ? next : [next])
+  .filter((id) => typeof id === 'string' && id.trim() !== '');
+
+// Writes a node's `next` from its outgoing target ids: nothing, one id, or a list for several.
+const toNextPointer = (targetIds) => {
+  const unique = [...new Set(targetIds)];
+  if (!unique.length) return undefined;
+  return unique.length === 1 ? unique[0] : unique;
+};
 
 // If duplicates exist anyway (older drafts), the most recently drawn connection (last) wins.
 const lastOf = (list) => (list.length ? list[list.length - 1] : undefined);
@@ -81,16 +99,16 @@ export const jsonToGraph = (workflowJson) => {
 
   // 2. Create Edges
   workflowJson.nodes.forEach((n) => {
-    // Standard 'next' pointer
-    if (n.next) {
+    // Standard 'next' pointer: one line per target (a list means the run fans out to all of them)
+    nextTargets(n.next).forEach((target) => {
       edges.push({
-        id: `${n.id}-${n.next}`,
+        id: `${n.id}-${target}`,
         source: n.id,
-        target: n.next,
+        target,
         type: 'deletable',
         markerEnd: { type: MarkerType.ArrowClosed },
       });
-    }
+    });
 
     // Branch nodes have routing logic
     if (n.type === 'branch' && n.rules) {
@@ -247,17 +265,21 @@ export const graphToJson = (nodes, edges, initialMetadata) => {
           .map((edge) => idMap.get(edge.target));
       }
 
-      const nextEdge = lastOf(outgoingEdges.filter((edge) => !stepEdges.includes(edge)));
-      if (nextEdge && idMap.has(nextEdge.target)) {
-        backendNode.next = idMap.get(nextEdge.target);
+      const nextPointer = toNextPointer(outgoingEdges
+        .filter((edge) => !stepEdges.includes(edge) && idMap.has(edge.target))
+        .map((edge) => idMap.get(edge.target)));
+      if (nextPointer !== undefined) {
+        backendNode.next = nextPointer;
       } else {
         delete backendNode.next;
       }
     } else {
-      // Standard nodes
-      const nextEdge = lastOf(outgoingEdges); // single output for standard nodes: the newest connection wins
-      if (nextEdge && idMap.has(nextEdge.target)) {
-        backendNode.next = idMap.get(nextEdge.target);
+      // Standard nodes: every outgoing line is a target; one line saves as a single id, several as a list
+      const nextPointer = toNextPointer(outgoingEdges
+        .filter((edge) => idMap.has(edge.target))
+        .map((edge) => idMap.get(edge.target)));
+      if (nextPointer !== undefined) {
+        backendNode.next = nextPointer;
       } else {
         delete backendNode.next;
       }

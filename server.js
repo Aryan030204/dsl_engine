@@ -69,6 +69,12 @@ app.get('/version', (req, res) => {
   });
 });
 
+// Public logo used by emails (no login: mail clients fetch it)
+app.get('/email-assets/datum-logo.png', (req, res) => {
+  res.set('Cache-Control', 'public, max-age=86400');
+  res.type('png').sendFile(require('./server/lib/emailFooter').LOGO_PATH);
+});
+
 app.use('/auth', authRoutes);
 
 // Machine-to-machine alert ingestion authenticates with ALERTS_INGEST_TOKEN, not a user session.
@@ -97,7 +103,9 @@ app.use('/email-config', emailConfigRoutes);
 app.use((err, req, res, next) => {
   const status = err.status || 500;
   res.status(status).json({
-    error: err.message || 'internal_error'
+    error: err.message || 'internal_error',
+    // a save that lost a race for the same version number: the page uses this to explain it
+    ...(err.code === 'workflow_version_conflict' ? { code: err.code, latestVersion: err.latestVersion } : {})
   });
 });
 

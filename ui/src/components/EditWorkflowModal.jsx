@@ -4,6 +4,7 @@ import toast from 'react-hot-toast';
 import { useUpdateWorkflow, useWorkflow, useCreateWorkflowVersion, useUpdateGlobalWorkflow, useCreateGlobalWorkflowVersion, useTenants } from '../api/hooks';
 import { useTenant } from '../context/TenantContext';
 import { Button } from './ui';
+import { nextWorkflowVersion } from '../utils/workflowVersion';
 
 export default function EditWorkflowModal({ workflow, onClose }) {
   const { data: workflowData } = useWorkflow(workflow.workflowId);
@@ -84,9 +85,10 @@ export default function EditWorkflowModal({ workflow, onClose }) {
       setJsonError(null);
 
       // Increment version
-      const currentVersion = workflowData?.version?.definitionJson?.version || '1.0';
-      const versionParts = currentVersion.split('.');
-      const newVersion = `${versionParts[0]}.${parseInt(versionParts[1] || 0) + 1}`;
+      const newVersion = nextWorkflowVersion({
+        latestVersion: workflowData?.workflow?.latestVersion || workflow.latestVersion,
+        definitionVersion: workflowData?.version?.definitionJson?.version
+      });
       
       definition.version = newVersion;
 

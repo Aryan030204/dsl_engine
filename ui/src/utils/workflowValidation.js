@@ -180,7 +180,8 @@ const DEFAULT_INVENTORY_OUTPUT_KEY = 'inventory_top_products';
 
 function successorIds(node) {
   const ids = [];
-  if (node?.next) ids.push(node.next);
+  if (Array.isArray(node?.next)) ids.push(...node.next);
+  else if (node?.next) ids.push(node.next);
   (Array.isArray(node?.rules) ? node.rules : []).forEach((rule) => { if (rule?.then) ids.push(rule.then); });
   if (node?.default?.then) ids.push(node.default.then);
   if (Array.isArray(node?.steps)) ids.push(...node.steps);

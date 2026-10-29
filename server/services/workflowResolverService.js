@@ -51,11 +51,17 @@ function getWorkflowTenantIds(workflow = {}) {
   return workflow.tenantId ? [workflow.tenantId] : [];
 }
 
+// The tenantId stored on a workflow's version rows. The unique index (tenantId, workflowId, version) makes this
+// the "namespace" a version number must be unique in.
+//   - A workflow document that has its own tenantId is a per-tenant copy: older "create for selected tenants"
+//     runs made one document per tenant that all share ONE workflowId. Each copy keeps its own history under
+//     its own tenantId; with null here, the copies would share a single numbering space and a save of
+//     version 1.3 for one tenant would collide with another tenant's 1.3 (and could never be fixed by reloading).
+//   - A document with no tenantId (one document for one or many tenants, with its own unique workflowId)
+//     stores null, as before.
 function getVersionTenantId(workflow = {}) {
-  if (Array.isArray(workflow.tenantIds) && workflow.tenantIds.length) {
-    return null;
-  }
-  return workflow.tenantId ?? null;
+  if (workflow.tenantId) return workflow.tenantId;
+  return null;
 }
 
 function buildWorkflowVersionQuery(workflow = {}, workflowId, version) {
