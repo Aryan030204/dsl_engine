@@ -68,6 +68,7 @@ export default function AlertStatePanel({ metadata, setMetadata }) {
       : `Alerts on rises: ${config.thresholds.normal} or higher, critical at ${config.thresholds.critical} or higher`;
   }
 
+  const metricUnit = STATE_METRIC_OPTIONS.find((item) => item.value === config.finding.metric)?.unit || '%';
   let summary = 'Sends on every run';
   if (isRca) {
     summary = enabled
@@ -134,7 +135,12 @@ export default function AlertStatePanel({ metadata, setMetadata }) {
                 <select
                   className={inputClass}
                   value={config.finding.metric}
-                  onChange={(e) => update('finding', 'metric', e.target.value)}
+                  onChange={(e) => {
+                    const option = STATE_METRIC_OPTIONS.find((item) => item.value === e.target.value);
+                    update('finding', 'metric', e.target.value);
+                    // a count metric needs count thresholds (1 / 3), not the percent defaults
+                    if (option?.thresholds) update('thresholds', null, { ...option.thresholds });
+                  }}
                 >
                   {STATE_METRIC_OPTIONS.map((option) => (
                     <option key={option.value} value={option.value}>{option.label}</option>
@@ -144,14 +150,14 @@ export default function AlertStatePanel({ metadata, setMetadata }) {
 
               <div className="flex flex-col gap-1">
                 <div className="flex gap-3 items-start">
-                  <Field label="Alert at (%)">
+                  <Field label={`Alert at (${metricUnit})`}>
                     <input
                       type="number" step="any" className={numberInputClass}
                       value={config.thresholds.normal}
                       onChange={(e) => update('thresholds', 'normal', toNumberOrEmpty(e.target.value))}
                     />
                   </Field>
-                  <Field label="Critical at (%)">
+                  <Field label={`Critical at (${metricUnit})`}>
                     <input
                       type="number" step="any" className={numberInputClass}
                       value={config.thresholds.critical}
