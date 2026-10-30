@@ -4,6 +4,7 @@
 // (server/services/recipientPolicy.js). Editing who is on a workflow saves a NEW workflow version.
 const { collectRecipients, addRecipient, removeRecipient, normalizeEmail } = require('../lib/notifierNodes');
 const { validateWorkflowDefinition } = require('../validation/workflowDefinition');
+const { ownTenantId, isDuplicateKeyError } = require('./workflowVersionService');
 const {
   buildWorkflowVersionQuery,
   loadLatestDefinitions,
@@ -279,14 +280,23 @@ function createEmailConfigService({ models, onChange = () => {} } = {}) {
     if (!ok) throw new EmailConfigError(`workflow no longer validates: ${errors.join('; ')}`, 422);
 
     const global = workflow.scope === 'global';
-    await m.WorkflowVersion.create({
+    const fields = {
       tenantId: global ? null : getVersionTenantId(workflow),
       tenantIds: global ? [] : getWorkflowTenantIds(workflow),
       scope: workflow.scope || 'tenant',
       workflowId: workflow.workflowId,
       version,
       definitionJson: next
-    });
+    };
+    try {
+      await m.WorkflowVersion.create(fields);
+    } catch (error) {
+      // Another tenant's copy of a shared workflowId can hold this number in the same tenant namespace:
+      // the version is not taken for THIS workflow (checked above), so keep it under its own tenant.
+      const own = global ? null : ownTenantId(workflow);
+      if (!isDuplicateKeyError(error) || !own || fields.tenantId === own) throw error;
+      await m.WorkflowVersion.create({ ...fields, tenantId: own });
+    }
     await m.Workflow.updateOne({ _id: workflow._id }, { $set: { latestVersion: version } });
     return version;
   }

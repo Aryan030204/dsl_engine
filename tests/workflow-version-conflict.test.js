@@ -221,3 +221,62 @@ test('a per-tenant copy of a shared workflowId keeps its versions under its own 
     await new Promise((resolve) => server.close(resolve));
   }
 });
+
+// ------------------------------------------------------------------ another tenant's copy holds the number
+
+// The unique key is (tenantId, workflowId, version). Here another tenant's copy of the same workflowId
+// already holds 1.3 in the null namespace; THIS workflow (PTS) only has up to 1.2.
+function stubSharedNamespace({ foreignNullVersions = [], ownVersions = [] } = {}) {
+  const calls = { created: [] };
+  const original = { create: WorkflowVersion.create, find: WorkflowVersion.find, deleteOne: WorkflowVersion.deleteOne };
+  WorkflowVersion.create = async (doc) => {
+    const clash = (doc.tenantId == null && foreignNullVersions.includes(doc.version))
+      || (doc.tenantId === 'PTS' && ownVersions.includes(doc.version));
+    if (clash) throw duplicateKey();
+    calls.created.push({ tenantId: doc.tenantId, version: doc.version });
+    return { _id: `new-${doc.version}`, ...doc };
+  };
+  WorkflowVersion.find = () => ({ select: () => ({ lean: async () => ownVersions.map((version) => ({ version })) }) });
+  WorkflowVersion.deleteOne = async () => ({});
+  return { calls, restore: () => Object.assign(WorkflowVersion, original) };
+}
+
+test('a number held by another tenant\'s copy of a shared workflowId is not a conflict: it is stored under the own tenant', async () => {
+  const stub = stubSharedNamespace({ foreignNullVersions: ['1.3'], ownVersions: ['1.1', '1.2'] });
+  try {
+    const workflow = fakeWorkflow({ tenantId: null, tenantIds: ['PTS'], latestVersion: '1.2' });
+    const created = await saveNewVersion({ workflow, version: '1.3', name: 'W', versionFields: { tenantId: null, tenantIds: ['PTS'], workflowId: 'wf_1' } });
+    assert.equal(created.tenantId, 'PTS');
+    assert.deepEqual(stub.calls.created, [{ tenantId: 'PTS', version: '1.3' }]);
+    assert.equal(workflow.latestVersion, '1.3');
+  } finally {
+    stub.restore();
+  }
+});
+
+test('a number this workflow really has is still a conflict, and the retry never masks it', async () => {
+  const stub = stubSharedNamespace({ foreignNullVersions: ['1.3'], ownVersions: ['1.1', '1.2', '1.3'] });
+  try {
+    const workflow = fakeWorkflow({ tenantId: null, tenantIds: ['PTS'], latestVersion: '1.3' });
+    await assert.rejects(
+      saveNewVersion({ workflow, version: '1.3', versionFields: { tenantId: null, tenantIds: ['PTS'], workflowId: 'wf_1' } }),
+      (error) => error.status === 409 && error.latestVersion === '1.3'
+    );
+    assert.deepEqual(stub.calls.created, []);
+  } finally {
+    stub.restore();
+  }
+});
+
+test('a workflow shared by several tenants (no single owner) still reports a plain conflict', async () => {
+  const stub = stubSharedNamespace({ foreignNullVersions: ['1.3'], ownVersions: ['1.1', '1.2'] });
+  try {
+    const workflow = fakeWorkflow({ tenantId: null, tenantIds: ['PTS', 'BBB'], latestVersion: '1.2' });
+    await assert.rejects(
+      saveNewVersion({ workflow, version: '1.3', versionFields: { tenantId: null, tenantIds: ['PTS', 'BBB'], workflowId: 'wf_1' } }),
+      (error) => error.status === 409
+    );
+  } finally {
+    stub.restore();
+  }
+});

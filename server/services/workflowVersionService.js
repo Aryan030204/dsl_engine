@@ -32,19 +32,38 @@ function versionConflictError(latestVersion) {
   return error;
 }
 
-// The newest version that exists for this workflow, whatever the workflow's own pointer says.
-async function findHighestVersion(workflow) {
-  const versions = await WorkflowVersion.find(buildWorkflowVersionQuery(workflow, workflow.workflowId))
+// Every version that exists for this workflow, whatever the workflow's own pointer says.
+async function listVersions(workflow) {
+  return WorkflowVersion.find(buildWorkflowVersionQuery(workflow, workflow.workflowId))
     .select('version')
     .lean();
+}
+
+function highestOf(versions) {
   return versions.reduce((best, entry) => (best == null || compareVersions(entry.version, best) > 0 ? entry.version : best), null);
 }
 
+// The newest version that exists for this workflow, whatever the workflow's own pointer says.
+async function findHighestVersion(workflow) {
+  return highestOf(await listVersions(workflow));
+}
+
+// The tenant this workflow belongs to when it belongs to exactly one, else null.
+function ownTenantId(workflow) {
+  const tenantIds = Array.isArray(workflow.tenantIds) ? workflow.tenantIds : [];
+  if (workflow.tenantId) return workflow.tenantId;
+  return tenantIds.length === 1 ? tenantIds[0] : null;
+}
+
 // Stores a new version and moves the workflow's latestVersion to it.
-//  - A version number that already exists is a conflict (409), not a server error: the page was working
-//    from an out-of-date copy, or the same save was sent twice. If the workflow's latestVersion was left
-//    behind by an earlier half-finished save, it is moved up to the newest version that exists, so a reload
-//    shows the right version.
+//  - The unique key is (tenantId, workflowId, version), and several tenants' workflows can share one
+//    workflowId. So a duplicate-key error does not always mean THIS workflow already has that version:
+//    it can be another tenant's copy sitting in the same (null) tenant namespace. In that case the
+//    version is stored under the workflow's own tenant instead, and the save goes through. Only when
+//    this workflow really has the version is it a conflict.
+//  - A real conflict is a 409, not a server error: the page was working from an out-of-date copy, or the
+//    same save was sent twice. If the workflow's latestVersion was left behind by an earlier
+//    half-finished save, it is moved up to the newest version that exists, so a reload shows the right one.
 //  - If updating the workflow fails after the version was stored, the new version is removed again, so a
 //    failed save never leaves a version the workflow does not point to.
 async function saveNewVersion({ workflow, versionFields, version, name }) {
@@ -53,12 +72,28 @@ async function saveNewVersion({ workflow, versionFields, version, name }) {
     created = await WorkflowVersion.create({ ...versionFields, version });
   } catch (error) {
     if (!isDuplicateKeyError(error)) throw error;
-    const highest = (await findHighestVersion(workflow)) || version;
-    if (compareVersions(highest, workflow.latestVersion) > 0) {
-      workflow.latestVersion = highest;
-      await workflow.save();
+    const versions = await listVersions(workflow);
+    const ownsVersion = versions.some((entry) => String(entry.version) === String(version));
+
+    if (!ownsVersion) {
+      const tenantId = ownTenantId(workflow);
+      if (tenantId && versionFields.tenantId !== tenantId) {
+        try {
+          created = await WorkflowVersion.create({ ...versionFields, tenantId, version });
+        } catch (retryError) {
+          if (!isDuplicateKeyError(retryError)) throw retryError;
+        }
+      }
     }
-    throw versionConflictError(highest);
+
+    if (!created) {
+      const highest = highestOf(versions) || version;
+      if (compareVersions(highest, workflow.latestVersion) > 0) {
+        workflow.latestVersion = highest;
+        await workflow.save();
+      }
+      throw versionConflictError(highest);
+    }
   }
 
   try {
@@ -73,4 +108,4 @@ async function saveNewVersion({ workflow, versionFields, version, name }) {
   return created;
 }
 
-module.exports = { saveNewVersion, compareVersions, findHighestVersion, versionConflictError, isDuplicateKeyError };
+module.exports = { saveNewVersion, ownTenantId, compareVersions, findHighestVersion, versionConflictError, isDuplicateKeyError };
