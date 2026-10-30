@@ -11,6 +11,7 @@ const {
 const { executeRun } = require('../../server/services/workflowExecutionService');
 const { getRetryDelayMs } = require('../domain/retryPolicy');
 const { RUN_TIMEOUT_CODE, RUN_CANCELED_CODE } = require('../../lib/runTimeout');
+const { isNonRetryableError } = require('../../lib/runErrors');
 const { getRabbitWorkflowRunQueue } = require('./runQueue/RabbitWorkflowRunQueue');
 
 async function processOne(workerId) {
@@ -21,7 +22,7 @@ async function processOne(workerId) {
   return processClaimedRun(run);
 }
 
-async function processClaimedRun(run) {
+async function processClaimedRun(run, { execute = executeRun, promote = promoteDeferredRun } = {}) {
   if (!run) return null;
 
   const heartbeat = startLeaseHeartbeat({
@@ -32,9 +33,9 @@ async function processClaimedRun(run) {
   try {
     const workflowName = run.definitionJson?.name || 'unknown';
     console.log(`[scheduler-worker] executing run=${run._id} workflow=${run.workflowId} workflowName="${workflowName}" tenant=${run.tenantId} trigger=${run.triggerType || 'unknown'} attempt=${run.attempt}/${run.maxAttempts || 3}`);
-    await executeRun({ run });
+    await execute({ run });
     console.log(`[scheduler-worker] completed run=${run._id} workflow=${run.workflowId} workflowName="${workflowName}" status=${run.status}`);
-    await promoteDeferredRun(run.tenantId, run.workflowId, run.executionKey);
+    await promote(run.tenantId, run.workflowId, run.executionKey);
     return { runId: run._id, status: 'completed' };
   } catch (error) {
     const workflowName = run.definitionJson?.name || 'unknown';
@@ -55,7 +56,20 @@ async function processClaimedRun(run) {
       run.leaseExpiresAt = null;
       await run.save();
       console.error(`[scheduler-worker] timed out run=${run._id} workflow=${run.workflowId} workflowName="${workflowName}" lastError=${run.lastError}`);
-      await promoteDeferredRun(run.tenantId, run.workflowId, run.executionKey);
+      await promote(run.tenantId, run.workflowId, run.executionKey);
+      return { runId: run._id, status: 'failed' };
+    }
+
+    // A misconfigured workflow fails the same way every time: fail it now instead of retrying.
+    if (isNonRetryableError(error)) {
+      run.status = 'failed';
+      run.finishedAt = new Date();
+      run.lastError = error.message;
+      run.leaseOwner = null;
+      run.leaseExpiresAt = null;
+      await run.save();
+      console.error(`[scheduler-worker] failed run=${run._id} workflow=${run.workflowId} workflowName="${workflowName}" (configuration error, not retried) lastError=${run.lastError}`);
+      await promote(run.tenantId, run.workflowId, run.executionKey);
       return { runId: run._id, status: 'failed' };
     }
 
@@ -72,7 +86,7 @@ async function processClaimedRun(run) {
       run.leaseExpiresAt = null;
       await run.save();
       console.error(`[scheduler-worker] dead-lettered run=${run._id} workflow=${run.workflowId} workflowName="${workflowName}" lastError=${run.lastError}`);
-      await promoteDeferredRun(run.tenantId, run.workflowId, run.executionKey);
+      await promote(run.tenantId, run.workflowId, run.executionKey);
       return { runId: run._id, status: 'dead_letter' };
     }
 
