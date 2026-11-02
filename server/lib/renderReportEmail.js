@@ -252,12 +252,18 @@ function cardWidthPct(count) {
 
 function renderMetricCards(metrics, primaryColor) {
   const width = cardWidthPct(metrics.length);
-  const cards = metrics.map((metric) => `<div class="rpt-kpi-card" style="display:inline-block;vertical-align:top;box-sizing:border-box;width:${width};padding:24px 10px;text-align:center;border-right:1px solid #e5e7eb;border-bottom:1px solid #e5e7eb;font-size:14px;">`
+  const perRow = metrics.length <= 4 ? Math.max(metrics.length, 1) : 3;
+  const cardList = metrics.map((metric) => `<div class="rpt-kpi-card" style="display:inline-block;vertical-align:top;box-sizing:border-box;width:${width};padding:24px 10px;text-align:center;border-right:1px solid #e5e7eb;border-bottom:1px solid #e5e7eb;font-size:14px;">`
     + `<div aria-hidden="true" style="font-size:22px;line-height:1;color:${metric.color || primaryColor};">${iconGlyph(metric.icon)}</div>`
     + `<div class="rpt-kpi-label" style="font-size:12px;font-weight:700;color:${metric.color || primaryColor};text-transform:uppercase;letter-spacing:.04em;">${escapeHtml(metric.label)}</div>`
     + `<div class="rpt-kpi-value" style="margin-top:12px;font-size:27px;font-weight:800;color:${metric.color || '#111827'};word-break:break-word;">${escapeHtml(metric.value)}</div>`
     + (metric.change == null ? '' : `<div class="rpt-kpi-change" style="margin-top:8px;font-size:15px;font-weight:700;color:${changeColor(metric.changeValue)};">${metric.changeValue > 0 ? '↑' : metric.changeValue < 0 ? '↓' : '—'} ${escapeHtml(metric.change)}</div>`)
-    + '</div>').join('');
+    + '</div>');
+  // Each row is its own block so a client that injects a block element (Gmail's
+  // trimmed-content "•••") can only split the grid between rows, never mid-row.
+  const rows = [];
+  for (let i = 0; i < cardList.length; i += perRow) rows.push(`<div class="rpt-kpi-row">${cardList.slice(i, i + perRow).join('')}</div>`);
+  const cards = rows.join('');
   return `<div class="rpt-kpis" style="font-size:0;border-top:1px solid #e5e7eb;border-left:1px solid #e5e7eb;border-radius:8px;overflow:hidden;">${cards}</div>`;
 }
 

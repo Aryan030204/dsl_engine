@@ -16,6 +16,7 @@ export const STATE_METRIC_OPTIONS = [
   { value: 'atc_rate_delta_pct', label: 'ATC rate change %' },
   { value: 'sales_delta_pct', label: 'Total sales change % (needs "sales" in Metric Compare)' },
   { value: 'aov_delta_pct', label: 'AOV change % (needs "aov" in Metric Compare)' },
+  { value: 'inventory_critical_products', label: 'Critical inventory products (count of products at or below the critical DOH; Inventory Breakdown node)', unit: 'products', thresholds: { normal: 1, critical: 3 } },
   { value: 'cod_alert_score', label: 'COD alert score (COD share by product node; use thresholds 1 / 2)' },
   { value: 'discount_alert_score', label: 'Discount alert score (Discount drill-down node; use thresholds 1 / 2)' },
 ];
