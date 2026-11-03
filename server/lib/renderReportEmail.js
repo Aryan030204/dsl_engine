@@ -211,7 +211,7 @@ function renderInsight(insight, primaryColor) {
 const REPORT_STYLES = `
 @media only screen and (max-width: 600px) {
   .rpt-wrap { padding: 16px !important; }
-  .rpt-divider { margin: 16px -16px 18px !important; }
+  .rpt-divider { margin: 16px 0 18px !important; }
   .rpt-head-cell { display: block !important; width: 100% !important; text-align: left !important; }
   .rpt-head-date { padding-top: 10px !important; }
   .rpt-brand { font-size: 18px !important; letter-spacing: .14em !important; }
@@ -252,18 +252,12 @@ function cardWidthPct(count) {
 
 function renderMetricCards(metrics, primaryColor) {
   const width = cardWidthPct(metrics.length);
-  const perRow = metrics.length <= 4 ? Math.max(metrics.length, 1) : 3;
-  const cardList = metrics.map((metric) => `<div class="rpt-kpi-card" style="display:inline-block;vertical-align:top;box-sizing:border-box;width:${width};padding:24px 10px;text-align:center;border-right:1px solid #e5e7eb;border-bottom:1px solid #e5e7eb;font-size:14px;">`
+  const cards = metrics.map((metric) => `<div class="rpt-kpi-card" style="display:inline-block;vertical-align:top;box-sizing:border-box;width:${width};padding:24px 10px;text-align:center;border-right:1px solid #e5e7eb;border-bottom:1px solid #e5e7eb;font-size:14px;">`
     + `<div aria-hidden="true" style="font-size:22px;line-height:1;color:${metric.color || primaryColor};">${iconGlyph(metric.icon)}</div>`
     + `<div class="rpt-kpi-label" style="font-size:12px;font-weight:700;color:${metric.color || primaryColor};text-transform:uppercase;letter-spacing:.04em;">${escapeHtml(metric.label)}</div>`
     + `<div class="rpt-kpi-value" style="margin-top:12px;font-size:27px;font-weight:800;color:${metric.color || '#111827'};word-break:break-word;">${escapeHtml(metric.value)}</div>`
     + (metric.change == null ? '' : `<div class="rpt-kpi-change" style="margin-top:8px;font-size:15px;font-weight:700;color:${changeColor(metric.changeValue)};">${metric.changeValue > 0 ? '↑' : metric.changeValue < 0 ? '↓' : '—'} ${escapeHtml(metric.change)}</div>`)
-    + '</div>');
-  // Each row is its own block so a client that injects a block element (Gmail's
-  // trimmed-content "•••") can only split the grid between rows, never mid-row.
-  const rows = [];
-  for (let i = 0; i < cardList.length; i += perRow) rows.push(`<div class="rpt-kpi-row">${cardList.slice(i, i + perRow).join('')}</div>`);
-  const cards = rows.join('');
+    + '</div>').join('');
   return `<div class="rpt-kpis" style="font-size:0;border-top:1px solid #e5e7eb;border-left:1px solid #e5e7eb;border-radius:8px;overflow:hidden;">${cards}</div>`;
 }
 
@@ -448,9 +442,9 @@ function renderReportEmail({ context, template, branding, subject }) {
   const logo = brand.logoUrl
     ? `<img src="${escapeHtml(brand.logoUrl)}" alt="${escapeHtml(brand.displayName)}" style="max-height:42px;max-width:190px;display:block;">`
     : `<div class="rpt-brand" style="font-size:24px;font-weight:900;letter-spacing:.22em;color:#111827;">${escapeHtml(brand.displayName.toUpperCase())}</div>`;
-  const html = `<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light only"><style>${REPORT_STYLES}${inventoryStyles}</style></head><body style="margin:0;padding:0;background:#f4f5f3;font-family:Arial,sans-serif;color:#111827;"><div class="rpt-wrap" style="max-width:760px;margin:0 auto;background:#fff;padding:30px;">
+  const html = `<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light only"><style>${REPORT_STYLES}${inventoryStyles}</style></head><body style="margin:0;padding:0;background:#f4f5f3;font-family:Arial,sans-serif;color:#111827;"><div class="rpt-wrap" style="max-width:760px;box-sizing:border-box;margin:0 auto;background:#fff;padding:30px;">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td class="rpt-head-cell">${logo}</td><td class="rpt-head-cell rpt-head-date" align="right">${view.currentDate ? `<div style="font-size:19px;font-weight:800;color:${brand.primaryColor};">${escapeHtml(view.currentDate)}</div>` : ''}${view.comparisonDate ? `<div style="font-size:12px;color:#4b5563;">vs ${escapeHtml(view.comparisonDate)}</div>` : ''}</td></tr></table>
-    <div class="rpt-divider" style="height:1px;background:#e5e7eb;margin:22px -30px 28px;"></div>
+    <div class="rpt-divider" style="height:1px;background:#e5e7eb;margin:22px 0 28px;"></div>
     ${view.eyebrow ? `<div style="font-size:15px;font-weight:800;text-transform:uppercase;color:${brand.primaryColor};">${escapeHtml(view.eyebrow)}</div>` : ''}
     ${view.title ? `<div class="rpt-title" style="margin-top:12px;font-size:38px;line-height:1.08;font-weight:900;color:#050505;">${escapeHtml(view.title)}</div>` : ''}
     ${view.description ? `<div class="rpt-desc" style="margin:16px 0 26px;font-size:16px;line-height:1.5;color:#5b5b5b;">${escapeHtml(view.description)}</div>` : ''}
