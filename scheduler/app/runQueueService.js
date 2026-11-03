@@ -17,8 +17,12 @@ const LEASE_HEARTBEAT_MS = Math.max(Number(process.env.SCHEDULER_LEASE_HEARTBEAT
 
 const REPLACED_RUN_MESSAGE = 'Canceled: replaced by a newer scheduled run';
 
-function getExecutionKey({ tenantId, workflowId }) {
-  return `${tenantId}:${workflowId}`;
+// One queue lane per workflow. A schedule with its own recipients gets its own lane (scopeToTrigger), so
+// "replace the running one" and "skip if running" never cancel another schedule's run of the same workflow.
+function getExecutionKey({ tenantId, workflowId, triggerRef = null, scopeToTrigger = false }) {
+  return scopeToTrigger && triggerRef
+    ? `${tenantId}:${workflowId}:${triggerRef}`
+    : `${tenantId}:${workflowId}`;
 }
 
 async function enqueueRun(params) {
@@ -33,10 +37,11 @@ async function enqueueRun(params) {
     overlapPolicy = 'queue_one_pending',
     maxAttempts = 3,
     notifyLive = false,
+    scopeToTrigger = false,
     model = WorkflowRun // replaceable in tests
   } = params;
 
-  const executionKey = getExecutionKey({ tenantId, workflowId });
+  const executionKey = getExecutionKey({ tenantId, workflowId, triggerRef, scopeToTrigger });
 
   const [activeRun, pendingRun] = await Promise.all([
     model.findOne({

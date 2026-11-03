@@ -18,6 +18,18 @@ function isSupportedTimeZone(timeZone) {
   }
 }
 
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// Accepts an array or a comma / newline separated string. Returns { recipients } (lower-cased, de-duplicated)
+// or { error } when any entry is not an email address.
+function parseRecipients(value) {
+  const raw = Array.isArray(value) ? value : String(value ?? '').split(/[,;\n]/);
+  const cleaned = raw.map((entry) => String(entry || '').trim().toLowerCase()).filter(Boolean);
+  const invalid = cleaned.filter((email) => !EMAIL_PATTERN.test(email));
+  if (invalid.length) return { error: `Invalid email address: ${invalid.join(', ')}` };
+  return { recipients: [...new Set(cleaned)] };
+}
+
 const router = express.Router({ mergeParams: true });
 
 router.post('/:workflowId/schedules', async (req, res, next) => {
@@ -47,11 +59,17 @@ router.post('/:workflowId/schedules', async (req, res, next) => {
       return res.status(400).json({ error: `windowMode must be one of ${SCHEDULE_WINDOW_MODE_VALUES.join(', ')}` });
     }
 
+    const parsedRecipients = parseRecipients(req.body?.recipients);
+    if (parsedRecipients.error) {
+      return res.status(400).json({ error: parsedRecipients.error });
+    }
+
     const schedule = await createSchedule({
       tenantId,
       workflowId,
       payload: {
         ...(req.body || {}),
+        recipients: parsedRecipients.recipients,
         timezone: resolvedTimeZone
       }
     });
@@ -83,6 +101,12 @@ router.patch('/:workflowId/schedules/:scheduleId', async (req, res, next) => {
     ['name', 'cronExpr', 'overlapPolicy', 'retryPolicy', 'isActive', 'windowMode', 'timezone'].forEach((field) => {
       if (req.body[field] !== undefined) updates[field] = req.body[field];
     });
+
+    if (req.body.recipients !== undefined) {
+      const parsedRecipients = parseRecipients(req.body.recipients);
+      if (parsedRecipients.error) return res.status(400).json({ error: parsedRecipients.error });
+      updates.recipients = parsedRecipients.recipients;
+    }
 
     if (
       updates.windowMode !== undefined

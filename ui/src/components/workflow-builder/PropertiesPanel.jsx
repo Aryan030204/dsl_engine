@@ -481,6 +481,7 @@ export default function PropertiesPanel({
   onClose,
   onDelete,
   workflowImportOptions = [],
+  allNodes = [],
   onAttachWorkflowToRule,
   isAttachingWorkflow = false,
   breakdownOutputKeySuggestions = [],
@@ -1336,6 +1337,22 @@ export default function PropertiesPanel({
                          <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-500 mb-2">
                            Attach Existing Workflow
                          </div>
+                         {(() => {
+                           // The attachment lives in the graph (rule.then -> workflow_ref node), not in this panel's state.
+                           const attachedNode = rule.then
+                             ? allNodes.find((node) => node.data?.id === rule.then && node.data?.type === 'workflow_ref')
+                             : null;
+                           if (!attachedNode) return null;
+                           const ref = attachedNode.data.ref || {};
+                           const name = attachedNode.data.referencedWorkflowName
+                             || workflowImportOptions.find((workflow) => workflow.workflowId === ref.workflow_id)?.name
+                             || ref.workflow_id;
+                           return (
+                             <div className="mb-2 rounded border border-green-200 bg-green-50 px-2 py-1 text-[11px] text-green-800">
+                               Attached: <span className="font-semibold">{name}</span>{ref.version ? ` v${ref.version}` : ''}
+                             </div>
+                           );
+                         })()}
                          <div className="flex gap-2 items-center min-w-0">
                            <select
                              className="flex-1 min-w-0 border p-1 rounded text-[11px] bg-white"
