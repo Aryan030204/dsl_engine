@@ -82,7 +82,7 @@ async function applyStateEngine({ run, result, intents, telegramIntents = [], st
       timezone: resolveTenantTimezone(meta.timezone),
       intents,
       telegramIntents,
-      fallbackRecipients: collectWorkflowRecipients(definition),
+      fallbackRecipients: meta.recipientOverride?.length ? meta.recipientOverride : collectWorkflowRecipients(definition),
       workflowName: meta.workflowName || definition.name,
       brandName: meta.brandName,
       branding: meta.emailBranding
@@ -156,6 +156,13 @@ function applyTenantToMeta(meta, tenant) {
   return meta;
 }
 
+// A schedule with its own recipients (context.meta.recipientOverride) sends every email of its run to
+// those addresses, whatever the workflow's email nodes list.
+function applyRecipientOverride(sender, recipients) {
+  if (!sender || !Array.isArray(recipients) || !recipients.length) return sender;
+  return (message) => sender({ ...message, to: recipients });
+}
+
 async function executeRun({ run, runId }) {
   const targetRun = run || await WorkflowRun.findById(runId);
   if (!targetRun) {
@@ -175,6 +182,7 @@ async function executeRun({ run, runId }) {
     // A run deleted from the database while it executes counts as cancelled too.
     return !current || current.status === 'canceled';
   };
+  const recipientOverride = targetRun.context.meta.recipientOverride;
   const runner = new WorkflowRunner(targetRun.definitionJson, {
     shouldStop: isCanceled,
     timeoutMs,
@@ -184,11 +192,14 @@ async function executeRun({ run, runId }) {
     workflowIdentity: `${targetRun.tenantId}/${targetRun.workflowId}@${targetRun.version}`,
     // State-engine workflows capture sends (filtered per person when delivered). Everything else sends
     // inline, so pause / mute are applied here.
-    emailSender: notificationMode.capture?.sender
-      || getDefaultRecipientPolicy().createPreferenceAwareSender(
-        (message) => require('./emailService').sendEmail(message),
-        { tenantId: targetRun.tenantId, workflowId: targetRun.workflowId }
-      ),
+    emailSender: applyRecipientOverride(
+      notificationMode.capture?.sender
+        || getDefaultRecipientPolicy().createPreferenceAwareSender(
+          (message) => require('./emailService').sendEmail(message),
+          { tenantId: targetRun.tenantId, workflowId: targetRun.workflowId }
+        ),
+      recipientOverride
+    ),
     telegramSender: notificationMode.capture?.telegramSender
   });
 
@@ -263,6 +274,7 @@ module.exports = {
   resolveWorkflowVersion,
   executeRun,
   applyTenantToMeta,
+  applyRecipientOverride,
   prepareNotificationMode,
   applyStateEngine,
   isDryRun,

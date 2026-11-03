@@ -674,6 +674,7 @@ function WorkflowBuilderContent({
             onClose={() => setSelectedNode(null)}
             onDelete={handleNodeDelete}
             workflowImportOptions={workflowImportOptions}
+            allNodes={nodes}
             onAttachWorkflowToRule={handleAttachWorkflowToBranchRule}
             isAttachingWorkflow={isAttachingWorkflowRef}
             breakdownOutputKeySuggestions={breakdownOutputKeySuggestions}

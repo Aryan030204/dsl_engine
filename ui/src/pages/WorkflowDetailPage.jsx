@@ -134,6 +134,7 @@ export default function WorkflowDetailPage() {
   const [selectedVersion, setSelectedVersion] = useState(null);
   const [scheduleForm, setScheduleForm] = useState({
     name: '',
+    recipients: '',
     overlapPolicy: 'replace_running',
     windowMode: 'previous_complete_day'
   });
@@ -250,6 +251,7 @@ export default function WorkflowDetailPage() {
 
       const payload = {
         name: scheduleForm.name.trim() || undefined,
+        recipients: scheduleForm.recipients,
         cronExpr,
         overlapPolicy: scheduleForm.overlapPolicy,
         windowMode: scheduleForm.windowMode
@@ -276,7 +278,7 @@ export default function WorkflowDetailPage() {
         });
         toast.success('Schedule created');
       }
-      setScheduleForm((prev) => ({ ...prev, name: '' }));
+      setScheduleForm((prev) => ({ ...prev, name: '', recipients: '' }));
       setShowScheduleForm(false);
       setSelectedPreset('');
       setCustomCronExpr('');
@@ -498,6 +500,11 @@ export default function WorkflowDetailPage() {
                               <span className="text-gray-500"> ({timezone})</span>
                             </p>
                             <p className="text-xs text-gray-500 mt-1">
+                              Sends to: {schedule.recipients?.length
+                                ? <span className="font-medium text-gray-700">{schedule.recipients.join(', ')}</span>
+                                : "the workflow's own recipients"}
+                            </p>
+                            <p className="text-xs text-gray-500 mt-1">
                               Analyses: {windowMode?.label || schedule.windowMode}
                             </p>
                             <p className="text-xs text-gray-500 mt-1">
@@ -601,6 +608,23 @@ export default function WorkflowDetailPage() {
                         className="w-full h-10 border border-gray-300 rounded-lg px-3 text-sm"
                         placeholder="e.g. Morning check"
                       />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Send emails to <span className="text-gray-400 font-normal">(optional)</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={scheduleForm.recipients}
+                        onChange={(e) => setScheduleForm((prev) => ({ ...prev, recipients: e.target.value }))}
+                        className="w-full h-10 border border-gray-300 rounded-lg px-3 text-sm"
+                        placeholder="e.g. ceo@brand.com, ops@brand.com"
+                      />
+                      <p className="text-xs text-gray-500 mt-1">
+                        Separate several addresses with commas. Leave empty to use the recipients set inside the workflow.
+                        Add one schedule per group to run the same workflow at different times for different people.
+                      </p>
                     </div>
 
                     {/* Step 1: when */}

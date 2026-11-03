@@ -152,9 +152,15 @@ async function BranchNode(def, context) {
   ruleEvaluations.push({ type: 'default', matched: true });
   
   if (!defaultRule || !defaultRule.then) {
+    const missingMetrics = [...new Set(ruleEvaluations
+      .flatMap((evaluation) => evaluation.conditions || [])
+      .filter((condition) => condition.found === false)
+      .map((condition) => condition.metric))];
     return {
       status: 'fail',
-      reason: 'BranchNode: No rule matched and no default path defined',
+      reason: missingMetrics.length
+        ? `BranchNode: No rule matched and no default path defined. Metric(s) not available at this point: ${missingMetrics.join(', ')}. Add a Metric Compare node before this branch.`
+        : 'BranchNode: No rule matched and no default path defined',
       ruleEvaluations
     };
   }

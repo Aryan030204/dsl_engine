@@ -18,6 +18,9 @@ const WorkflowScheduleSchema = new mongoose.Schema(
     triggerType: { type: String, enum: ['cron'], default: 'cron' },
     cronExpr: { type: String, required: true },
     timezone: { type: String, default: 'UTC' },
+    // When set, this schedule's runs send their emails to these addresses instead of the ones in the
+    // workflow's nodes, so one workflow can run at different times for different people.
+    recipients: { type: [String], default: [] },
     windowMode: {
       type: String,
       enum: SCHEDULE_WINDOW_MODE_VALUES,

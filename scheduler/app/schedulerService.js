@@ -187,7 +187,19 @@ function buildDayToDateVsPreviousDayContext(tenantId, triggerTime, payload = {},
 
 const SEVEN_DAY_BASELINE = 7;
 
+// A schedule with its own recipients sends this run's emails to them (see applyRecipientOverride in
+// workflowExecutionService), and queues independently of the workflow's other schedules.
+function withScheduleRecipients(context, schedule) {
+  const recipients = Array.isArray(schedule?.recipients) ? schedule.recipients.filter(Boolean) : [];
+  if (!recipients.length) return context;
+  return { ...context, meta: { ...(context.meta || {}), recipientOverride: recipients } };
+}
+
 function buildCronContext(schedule, triggerTime, payload = {}) {
+  return withScheduleRecipients(buildCronWindowContext(schedule, triggerTime, payload), schedule);
+}
+
+function buildCronWindowContext(schedule, triggerTime, payload = {}) {
   const mode = schedule?.windowMode || SCHEDULE_WINDOW_MODES.PREVIOUS_COMPLETE_DAY;
   const timeZone = schedule?.timezone || 'UTC';
 
@@ -352,6 +364,7 @@ async function createSchedule({ tenantId, workflowId, payload }) {
     cronExpr: payload.cronExpr,
     timezone: payload.timezone || 'UTC',
     windowMode: payload.windowMode || SCHEDULE_WINDOW_MODES.PREVIOUS_COMPLETE_DAY,
+    recipients: Array.isArray(payload.recipients) ? payload.recipients : [],
     isActive: payload.isActive !== false,
     overlapPolicy: payload.overlapPolicy || 'replace_running',
     retryPolicy: payload.retryPolicy || { maxAttempts: 3, backoffSeconds: [30, 120, 600] },
@@ -437,6 +450,7 @@ async function evaluateDueSchedules(now = new Date(), { staleGraceMs = getStaleG
           definitionJson: workflowVersion.definitionJson,
           triggerType: 'cron',
           triggerRef: schedule._id,
+          scopeToTrigger: Boolean(schedule.recipients?.length),
           overlapPolicy: schedule.overlapPolicy,
           maxAttempts: schedule.retryPolicy?.maxAttempts || 3
         });
@@ -570,6 +584,7 @@ async function replayMissedTriggers(scheduleId, { limit = 50 } = {}) {
       definitionJson: workflowVersion.definitionJson,
       triggerType: 'cron',
       triggerRef: schedule._id,
+      scopeToTrigger: Boolean(schedule.recipients?.length),
       overlapPolicy: schedule.overlapPolicy,
       maxAttempts: schedule.retryPolicy?.maxAttempts || 3
     });
