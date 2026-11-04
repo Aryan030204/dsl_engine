@@ -15,9 +15,18 @@ const router = express.Router({ mergeParams: true });
 router.post('/:workflowId/runs', async (req, res, next) => {
   try {
     const { tenantId, workflowId } = req.params;
-    const { version, context, rerun, notify } = req.body || {};
-    // Manual runs only notify and update alert state when explicitly asked to.
-    const notifyLive = notify === true;
+    const { version, context, rerun, notify, testMode: rawTestMode, testAudience: rawTestAudience } = req.body || {};
+    // Testing mode: the run emails what it produced, whatever the alert state, and saves no state.
+    const testMode = rawTestMode === true;
+    const testAudience = rawTestAudience === undefined ? 'me' : rawTestAudience;
+    if (testMode && !['me', 'team'].includes(testAudience)) {
+      return res.status(400).json({ error: 'testAudience must be "me" or "team"' });
+    }
+    if (testMode && testAudience === 'me' && !req.user?.email) {
+      return res.status(400).json({ error: 'testing mode "only me" needs a signed-in user with an email address' });
+    }
+    // Manual runs only notify and update alert state when explicitly asked to; testing mode never does.
+    const notifyLive = notify === true && !testMode;
     const mode = req.query.mode === 'async' ? 'async' : 'sync';
     const tenant = await Tenant.findOne({ tenantId }).lean();
     if (!tenant) return res.status(404).json({ error: 'tenant not found' });
@@ -27,12 +36,18 @@ router.post('/:workflowId/runs', async (req, res, next) => {
       contextTimezone: context?.meta?.timezone,
       tenantTimezone: tenant.settings?.timezone
     });
+    // A rerun of an earlier test run must not inherit that run's "only me" recipients.
+    const { recipientOverride: inheritedOverride, testRun: wasTestRun, ...incomingMeta } = context?.meta || {};
     const contextWithTimezone = {
       ...(context || {}),
       meta: {
-        ...(context?.meta || {}),
+        ...incomingMeta,
+        ...(inheritedOverride && !wasTestRun ? { recipientOverride: inheritedOverride } : {}),
         tenantId,
-        timezone: effectiveTimezone
+        timezone: effectiveTimezone,
+        // "Only me": every email of the run goes to the tester (same mechanism a schedule's own recipients use).
+        ...(testMode ? { testRun: true } : {}),
+        ...(testMode && testAudience === 'me' ? { recipientOverride: [req.user.email] } : {})
       }
     };
     const effectiveContext = rerun
@@ -66,6 +81,8 @@ router.post('/:workflowId/runs', async (req, res, next) => {
         triggerType: 'manual',
         triggerRef: null,
         notifyLive,
+        testMode,
+        testAudience,
         overlapPolicy: 'queue_one_pending',
         maxAttempts: 3
       });
@@ -92,6 +109,8 @@ router.post('/:workflowId/runs', async (req, res, next) => {
       triggerType: 'manual',
       triggerRef: null,
       notifyLive,
+      testMode,
+      testAudience,
       executionKey: `${tenantId}:${workflowId}`,
       context: effectiveContext,
       definitionJson: workflowVersion.definitionJson,

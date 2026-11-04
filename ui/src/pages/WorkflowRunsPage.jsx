@@ -31,6 +31,8 @@ export default function WorkflowRunsPage() {
         context: run.context,
         rerun: true,
         mode: 'async',
+        // A rerun of a test run is a test run too, with the same "send to" choice.
+        ...(run.testMode ? { testMode: true, testAudience: run.testAudience === 'team' ? 'team' : 'me' } : {}),
       });
       if (!result.runId) {
         toast.error('Not started: this workflow already has a run in progress and one waiting.');
@@ -170,6 +172,9 @@ export default function WorkflowRunsPage() {
                       <Badge status={getStatusBadge(run.status)}>
                         {run.status}
                       </Badge>
+                      {run.testMode && (
+                        <span className="ml-2 inline-block rounded bg-indigo-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-indigo-700">Test</span>
+                      )}
                     </td>
                     <td className="py-4 px-6 text-sm text-gray-600">
                       {getDuration(run.startedAt, run.finishedAt)}

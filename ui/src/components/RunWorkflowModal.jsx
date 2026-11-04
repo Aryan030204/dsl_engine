@@ -4,6 +4,7 @@ import { X, Play } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useExecuteWorkflow, useTenants, useWorkflow } from '../api/hooks';
 import { useTenant } from '../context/TenantContext';
+import { useAuth } from '../context/AuthContext';
 import { Button } from './ui';
 import {
   getPartialDayProductCompatibilityErrors,
@@ -67,6 +68,10 @@ export default function RunWorkflowModal({ workflow, onClose }) {
   const [usePreviousPeriod, setUsePreviousPeriod] = useState(false);
   // Manual runs are dry runs for alert state unless this is ticked (see server/services/workflowExecutionService).
   const [notifyLive, setNotifyLive] = useState(false);
+  // Testing mode: email what the run produced, ignoring alert state / cooldown / quiet hours, saving none.
+  const [testMode, setTestMode] = useState(false);
+  const [testAudience, setTestAudience] = useState('me');
+  const { user } = useAuth();
   const [previousBaselineDates, setPreviousBaselineDates] = useState(null);
 
   useEffect(() => {
@@ -163,7 +168,12 @@ export default function RunWorkflowModal({ workflow, onClose }) {
     };
 
     try {
-      const result = await executeWorkflow.mutateAsync({ context, mode: 'async', notify: notifyLive });
+      const result = await executeWorkflow.mutateAsync({
+        context,
+        mode: 'async',
+        notify: testMode ? false : notifyLive,
+        ...(testMode ? { testMode: true, testAudience } : {})
+      });
       if (!result.runId) {
         // The schedule's overlap policy skipped it: a run is already running and one is already waiting.
         toast.error('Not started: this workflow already has a run in progress and one waiting.');
@@ -285,12 +295,66 @@ export default function RunWorkflowModal({ workflow, onClose }) {
               </div>
             </div>
 
+            {/* Testing mode: send the email whatever the alert state is */}
+            <div className="py-1 border-t border-gray-100 pt-4">
+              <div className="flex items-start gap-2">
+                <input
+                  type="checkbox"
+                  id="testMode"
+                  checked={testMode}
+                  onChange={(e) => {
+                    setTestMode(e.target.checked);
+                    if (e.target.checked) setNotifyLive(false);
+                  }}
+                  className="w-4 h-4 mt-0.5 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500"
+                />
+                <label htmlFor="testMode" className="text-sm text-gray-700 cursor-pointer">
+                  <span className="font-medium">Testing mode</span>
+                  <span className="block text-xs text-gray-500">
+                    Runs normally and emails the result. Ignores the alert state, cooldown and quiet hours, and does not
+                    change them. The subject starts with [TEST].
+                  </span>
+                </label>
+              </div>
+              {testMode && (
+                <div className="mt-3 ml-6 space-y-2 rounded-lg border border-indigo-100 bg-indigo-50 p-3">
+                  <p className="text-xs font-medium text-indigo-900">Send the test to</p>
+                  <label className="flex items-start gap-2 text-sm text-gray-700 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="testAudience"
+                      value="me"
+                      checked={testAudience === 'me'}
+                      onChange={() => setTestAudience('me')}
+                      className="mt-0.5 text-indigo-600"
+                    />
+                    <span>Only me{user?.email ? <span className="text-gray-500"> ({user.email})</span> : null}</span>
+                  </label>
+                  <label className="flex items-start gap-2 text-sm text-gray-700 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="testAudience"
+                      value="team"
+                      checked={testAudience === 'team'}
+                      onChange={() => setTestAudience('team')}
+                      className="mt-0.5 text-indigo-600"
+                    />
+                    <span>
+                      The workflow's real recipients
+                      <span className="block text-xs text-amber-700">Everyone on the workflow's email list (and Telegram) gets the test.</span>
+                    </span>
+                  </label>
+                </div>
+              )}
+            </div>
+
             {/* Live notifications (alert-state workflows) */}
-            <div className="flex items-start gap-2 py-1 border-t border-gray-100 pt-4">
+            <div className={`flex items-start gap-2 py-1 border-t border-gray-100 pt-4 ${testMode ? 'opacity-50' : ''}`}>
               <input
                 type="checkbox"
                 id="notifyLive"
                 checked={notifyLive}
+                disabled={testMode}
                 onChange={(e) => setNotifyLive(e.target.checked)}
                 className="w-4 h-4 mt-0.5 text-primary-600 border-gray-300 rounded focus:ring-primary-500"
               />

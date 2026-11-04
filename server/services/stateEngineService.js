@@ -1,5 +1,5 @@
 const { normalizeStateConfig, isAutomaticTrigger } = require('../lib/stateEngine/defaults');
-const { resolveFindingValue } = require('../lib/stateEngine/severity');
+const { resolveFindingValue, classifySeverity } = require('../lib/stateEngine/severity');
 const { evaluateState } = require('../lib/stateEngine/evaluateState');
 const { renderStateEmail } = require('../lib/renderStateEmail');
 
@@ -378,10 +378,10 @@ function createStateEngineService({
     };
   }
 
-  async function deliverEmail({ decision, intents, fallbackRecipients, workflowName, brandName, branding, tenantId, workflowId }) {
+  async function deliverEmail({ decision, intents, fallbackRecipients, workflowName, brandName, branding, tenantId, workflowId, skipPolicy = false }) {
     const email = renderStateEmail({ decision, intents, fallbackRecipients, workflowName, brandName, branding });
     let suppressed = [];
-    if (recipientPolicy && email.to.length) {
+    if (recipientPolicy && !skipPolicy && email.to.length) {
       // The decision's state is the alert's severity (TRIGGERED / CRITICAL) for the severity filter.
       const filtered = await recipientPolicy.applyRecipientPreferences({
         recipients: email.to,
@@ -442,7 +442,77 @@ function createStateEngineService({
     return { evaluation, replayed, delivery, summary: summarize(evaluation, delivery) };
   }
 
-  return { applyExecution, deliver, processExecution, previewExecution, rollbackBookkeeping };
+  // Testing mode (a manual run with "Testing mode" on): send what the run produced, whatever the alert
+  // state. Nothing is read from or written to the state store -- no state change, no cooldown started, no
+  // audit row -- and cooldown, quiet hours and the threshold do not gate the send. The finding and its
+  // severity are worked out only to show on the run page.
+  //   audience 'me':   the run's recipients are already the tester alone; pause / mute does not apply to
+  //                    their own mailbox and Telegram is not sent.
+  //   audience 'team': the workflow's real recipients (pause / mute still applies) plus Telegram.
+  async function deliverTestExecution({
+    context, config: rawConfig, intents = [], telegramIntents = [], fallbackRecipients = [],
+    audience = 'me', workflowName, brandName, branding, tenantId, workflowId
+  }) {
+    const config = normalizeStateConfig(rawConfig);
+    const finding = resolveFindingValue(context, config.finding);
+    const severity = finding.conclusive ? classifySeverity(finding.value, config.thresholds) : null;
+    const summary = {
+      conclusive: finding.conclusive,
+      previous_state: null,
+      resulting_state: severity,
+      trigger_type: 'manual',
+      finding: finding.conclusive
+        ? { metric: finding.metric, value: finding.value, severity, thresholds: { ...config.thresholds } }
+        : { metric: finding.metric, value: null },
+      notification: { candidate_reason: null, should_send: true, reason: 'test_mode', suppressed_by: null },
+      test_mode: true,
+      test_audience: audience,
+      dry_run: false,
+      delivery_status: 'none',
+      delivery_error: null,
+      telegram_status: null,
+      telegram_error: null,
+      delivery_skipped_reason: null,
+      to: []
+    };
+
+    const sendTelegram = audience === 'team' && telegramIntents.length > 0;
+    if (intents.length === 0 && !sendTelegram) {
+      return { ...summary, delivery_skipped_reason: 'no_notification_on_path' };
+    }
+
+    const decision = { resulting_state: severity || 'NORMAL', finding: summary.finding };
+    const email = intents.length
+      ? await deliverEmail({
+        decision, intents, fallbackRecipients, workflowName, brandName, branding, tenantId, workflowId,
+        skipPolicy: audience === 'me'
+      })
+      : null;
+    const telegram = sendTelegram ? await deliverTelegram(telegramIntents) : null;
+
+    const channels = [email, telegram].filter((channel) => channel && channel.status !== 'skipped');
+    if (!channels.length) {
+      return { ...summary, delivery_skipped_reason: 'recipients_opted_out', to: [] };
+    }
+    const sentCount = channels.filter((channel) => channel.status === 'sent').length;
+    const anyDelivered = channels.some((channel) => channel.status === 'sent' || channel.status === 'partial');
+    const status = sentCount === channels.length ? 'sent' : (anyDelivered ? 'partial' : 'failed');
+    const error = channels
+      .filter((channel) => channel.status !== 'sent' && channel.error)
+      .map((channel) => `${channel.channel}: ${channel.error}`)
+      .join('; ') || null;
+    return {
+      ...summary,
+      delivery_status: status,
+      delivery_error: error,
+      telegram_status: telegram?.status || null,
+      telegram_error: telegram?.error || null,
+      to: email?.to || [],
+      subject: email?.subject || null
+    };
+  }
+
+  return { applyExecution, deliver, processExecution, previewExecution, deliverTestExecution, rollbackBookkeeping };
 }
 
 let defaultService = null;

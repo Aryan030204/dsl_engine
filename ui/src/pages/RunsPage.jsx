@@ -136,7 +136,7 @@ export default function RunsPage() {
                         </Badge>
                       </td>
                       <td className="py-4 px-6 text-sm text-gray-600">
-                        {run.triggerType || '-'}
+                        {run.triggerType || '-'}{run.testMode ? ' (test)' : ''}
                       </td>
                       <td className="py-4 px-6 text-sm text-gray-600">
                         {getDuration(run.startedAt, run.finishedAt)}

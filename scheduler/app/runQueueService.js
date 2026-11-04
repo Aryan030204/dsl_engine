@@ -37,6 +37,8 @@ async function enqueueRun(params) {
     overlapPolicy = 'queue_one_pending',
     maxAttempts = 3,
     notifyLive = false,
+    testMode = false,
+    testAudience = 'me',
     scopeToTrigger = false,
     model = WorkflowRun // replaceable in tests
   } = params;
@@ -103,6 +105,8 @@ async function enqueueRun(params) {
     triggerType,
     triggerRef,
     notifyLive: notifyLive === true,
+    testMode: testMode === true,
+    testAudience: testAudience === 'team' ? 'team' : 'me',
     executionKey,
     context,
     definitionJson,

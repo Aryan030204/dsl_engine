@@ -74,6 +74,17 @@ export function RunStateDecisionCard({ run }) {
         {error && (
           <p className="text-sm text-red-600 mb-3">State engine error: {error}</p>
         )}
+        {evaluation?.test_mode && (
+          <p className="text-sm text-indigo-800 bg-indigo-50 border border-indigo-200 rounded-md px-3 py-2 mb-3">
+            Test run: the alert state, cooldown and quiet hours were ignored and nothing was saved.
+            {evaluation.delivery_status === 'none'
+              ? (evaluation.delivery_skipped_reason === 'no_notification_on_path'
+                ? ' No email was sent: this run did not reach an email node.'
+                : ' No email was sent.')
+              : ` Email ${evaluation.delivery_status}${Array.isArray(evaluation.to) && evaluation.to.length ? ` to ${evaluation.to.join(', ')}` : ''}.`}
+            {evaluation.delivery_error ? ` (${evaluation.delivery_error})` : ''}
+          </p>
+        )}
         {evaluation?.dry_run && (
           <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-3 py-2 mb-3">
             Dry run: this manual run did not change the alert state, start a cooldown or send anything.

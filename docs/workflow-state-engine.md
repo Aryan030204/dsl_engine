@@ -175,3 +175,19 @@ API:
 
 - `GET /tenants/:tenantId/workflows/:workflowId/state`
 - `GET /tenants/:tenantId/workflows/:workflowId/state/evaluations?limit=`
+
+## Testing mode (manual runs)
+
+Testing an alert used to mean clearing the workflow's state in MongoDB. The **Run Workflow** dialog now has a
+**Testing mode** switch:
+
+- The run executes normally and **emails whatever its nodes produced**, ignoring the alert state, cooldown, quiet hours
+  and the threshold. The subject starts with `[TEST]`.
+- It **saves nothing**: no state change, no cooldown started, no audit row (`stateEngineService.deliverTestExecution`
+  never touches the state store). Test as often as you like.
+- **Send the test to**: *Only me* (the signed-in user's email; pause/mute does not apply; Telegram is not sent) or
+  *The workflow's real recipients* (same list as a live alert; pause/mute still applies; Telegram is sent).
+- If the run's path reaches no email node, nothing is sent and the run page says so.
+- Testing mode replaces "Send notifications and update alert state", and only manual runs can be test runs (scheduled and
+  alert-triggered runs never are). A rerun of a test run is a normal run again.
+- The run page shows a "Test run" note and the runs list a "Test" badge.
