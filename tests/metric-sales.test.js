@@ -250,8 +250,8 @@ test('table numbers never wrap (a change stays with its arrow); text cells may w
   const template = reportTemplate();
   template.tables[0].columns.push({ label: 'CVR change', path: 'deltas.cvr_delta_pct', format: 'delta_percent' });
   const rendered = renderEmail({ format: 'report', context: ctx, template, subject: 'R' });
-  assert.match(rendered.html, /white-space:nowrap;">↓ -35\.02%<\/td>/);
-  assert.match(rendered.html, /word-break:break-word;">Oud Nirvana, Oud Rocks &amp; White Oud Perfume 90 ML<\/td>/);
+  assert.match(rendered.html, /white-space:nowrap;">↓&nbsp;-35\.02%<\/td>/);
+  assert.match(rendered.html, /overflow-wrap:break-word;">Oud Nirvana, Oud Rocks &amp; White Oud Perfume 90 ML<\/td>/);
 });
 
 test('orders are filtered with an index-friendly created_date range plus the exact created_at bounds', () => {

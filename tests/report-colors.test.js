@@ -113,7 +113,7 @@ test('the inventory Status column is colored automatically, even when its format
   assert.match(html, /background:#fee2e2;color:#dc2626;font-weight:700;white-space:nowrap;">Critical</);
   assert.match(html, /background:#ffedd5;color:#ea580c;font-weight:700;white-space:nowrap;">Low stock</);
   assert.match(html, /background:#d1fae5;color:#059669;font-weight:700;white-space:nowrap;">Healthy</);
-  assert.match(html, /word-break:break-word;">WISAL DHAHAB<\/td>/, 'the product column stays plain text');
+  assert.match(html, /overflow-wrap:break-word;">WISAL DHAHAB<\/td>/, 'the product column stays plain text');
 });
 
 test('only the inventory statuses are colored automatically', () => {
@@ -126,7 +126,7 @@ test('only the inventory statuses are colored automatically', () => {
   const render2 = (path) => renderEmail({ format: 'report', template: tpl(path), context: ctx, subject: 'R' }).html;
 
   const byStatus = render2('status');
-  assert.match(byStatus, /word-break:break-word;">Shipped<\/td>/, 'another kind of status stays text');
+  assert.match(byStatus, /overflow-wrap:break-word;">Shipped<\/td>/, 'another kind of status stays text');
   assert.match(byStatus, />Critical<\/span>/, 'an inventory status is a chip');
 
   const byOtherPath = render2('state');
