@@ -148,7 +148,11 @@ router.patch('/:tenantId', async (req, res, next) => {
       return res.status(404).json({ error: 'Tenant not found' });
     }
 
-    if (name !== undefined) tenant.name = name;
+    if (name !== undefined) {
+      const trimmedName = typeof name === 'string' ? name.trim() : '';
+      if (!trimmedName) return res.status(400).json({ error: 'name cannot be empty' });
+      tenant.name = trimmedName;
+    }
     if (description !== undefined) tenant.description = description;
     if (isActive !== undefined) tenant.isActive = isActive;
     if (settings !== undefined) {

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Settings, Save, Trash2, Plus } from 'lucide-react';
+import { Settings, Save, Trash2, Plus, Pencil, X } from 'lucide-react';
 import { useTenant } from '../context/TenantContext';
 import { useTenants, useDeleteTenant, useUpdateTenant } from '../api/hooks';
 import { Card, CardHeader, CardContent, CardTitle, Button, Badge, PageSpinner } from '../components/ui';
@@ -27,6 +27,33 @@ export default function SettingsPage() {
   const [currencyDrafts, setCurrencyDrafts] = useState({});
   const [brandingDrafts, setBrandingDrafts] = useState({});
   const [storeDrafts, setStoreDrafts] = useState({});
+  // A tenant is in "edit name" mode while it has an entry here; the entry is the text being typed.
+  const [nameDrafts, setNameDrafts] = useState({});
+
+  const startEditingName = (tenant) => setNameDrafts((prev) => ({ ...prev, [tenant.tenantId]: tenant.name || '' }));
+  const stopEditingName = (tenant) => setNameDrafts((prev) => {
+    const { [tenant.tenantId]: _discarded, ...rest } = prev;
+    return rest;
+  });
+
+  const handleSaveName = async (tenant) => {
+    const nextName = String(nameDrafts[tenant.tenantId] ?? '').trim();
+    if (!nextName) {
+      toast.error('Name cannot be empty');
+      return;
+    }
+    if (nextName === tenant.name) {
+      stopEditingName(tenant);
+      return;
+    }
+    try {
+      await updateTenant.mutateAsync({ tenantId: tenant.tenantId, updates: { name: nextName } });
+      stopEditingName(tenant);
+      toast.success(`Name updated for '${tenant.tenantId}'`);
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to update tenant name');
+    }
+  };
 
   const handleDeleteTenant = async (tid) => {
     if (!confirm(`Are you sure you want to deactivate tenant '${tid}'?`)) return;
@@ -177,7 +204,42 @@ export default function SettingsPage() {
                           <Badge status="active">Current</Badge>
                         )}
                       </div>
-                      <p className="text-sm text-gray-600">{tenant.name}</p>
+                      {nameDrafts[tenant.tenantId] !== undefined ? (
+                        <div className="flex items-center gap-2 mt-1">
+                          <input
+                            autoFocus
+                            className="border rounded px-2 py-1.5 text-sm min-w-0 flex-1 max-w-sm"
+                            value={nameDrafts[tenant.tenantId]}
+                            onChange={(e) => setNameDrafts((prev) => ({ ...prev, [tenant.tenantId]: e.target.value }))}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') handleSaveName(tenant);
+                              if (e.key === 'Escape') stopEditingName(tenant);
+                            }}
+                            placeholder="Brand name"
+                          />
+                          <Button size="sm" variant="secondary" onClick={() => handleSaveName(tenant)} loading={updateTenant.isPending}>
+                            <Save className="w-3 h-3 mr-1" />
+                            Save Name
+                          </Button>
+                          <Button size="sm" variant="ghost" onClick={() => stopEditingName(tenant)}>
+                            <X className="w-3 h-3 mr-1" />
+                            Cancel
+                          </Button>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm text-gray-600">{tenant.name}</p>
+                          <button
+                            type="button"
+                            onClick={() => startEditingName(tenant)}
+                            className="text-gray-400 hover:text-gray-700"
+                            title="Edit name"
+                            aria-label={`Edit name of ${tenant.tenantId}`}
+                          >
+                            <Pencil className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      )}
                       {tenant.description && (
                         <p className="text-xs text-gray-500 mt-1">{tenant.description}</p>
                       )}
