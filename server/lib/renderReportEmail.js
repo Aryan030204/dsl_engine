@@ -237,7 +237,7 @@ function changeColor(value) {
 }
 
 function iconGlyph(icon) {
-  return { sessions: '◎', orders: '▣', conversion: '↗', trend: '↗', sales: '◆', aov: '◇', cart: '⊕', metric: '●' }[icon] || '●';
+  return { sessions: '◎', orders: '▣', conversion: '↗︎', trend: '↗︎', sales: '◆', aov: '◇', cart: '⊕', metric: '●' }[icon] || '●';
 }
 
 // KPI cards as a fluid grid: each card is an inline-block, so they flow into as
