@@ -1,6 +1,6 @@
-const dns = require('dns');
+const { configureDns } = require('../server/lib/configureDns');
 
-dns.setServers(['8.8.8.8', '1.1.1.1']);
+configureDns();
 
 const mongoose = require('mongoose');
 require('dotenv').config();

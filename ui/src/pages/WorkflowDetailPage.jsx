@@ -22,6 +22,7 @@ import {
   useWorkflowSchedules,
   useCreateWorkflowSchedule,
   useCreateWorkflowBulkSchedule,
+  useUpdateWorkflowSchedule,
   usePauseWorkflowSchedule,
   useResumeWorkflowSchedule,
   useDeleteWorkflowSchedule,
@@ -124,6 +125,7 @@ export default function WorkflowDetailPage() {
   const deleteWorkflow = useDeleteWorkflow();
   const createSchedule = useCreateWorkflowSchedule(workflowId);
   const createBulkSchedule = useCreateWorkflowBulkSchedule(workflowId);
+  const updateSchedule = useUpdateWorkflowSchedule(workflowId);
   const pauseSchedule = usePauseWorkflowSchedule(workflowId);
   const resumeSchedule = useResumeWorkflowSchedule(workflowId);
   const deleteSchedule = useDeleteWorkflowSchedule(workflowId);
@@ -141,6 +143,8 @@ export default function WorkflowDetailPage() {
   const [scheduleMode, setScheduleMode] = useState('simple');
   // Nothing is pre-selected: a default here used to read like the workflow's active schedule.
   const [showScheduleForm, setShowScheduleForm] = useState(false);
+  // The id of the schedule being edited; null while the form creates a new one.
+  const [editingScheduleId, setEditingScheduleId] = useState(null);
   const [selectedPreset, setSelectedPreset] = useState('');
   const [customCronExpr, setCustomCronExpr] = useState('');
   const [scheduleTargetTenantIds, setScheduleTargetTenantIds] = useState([]);
@@ -239,6 +243,23 @@ export default function WorkflowDetailPage() {
         return;
       }
 
+      if (editingScheduleId) {
+        // Name and recipients are always sent, so clearing them in the form clears them on the schedule.
+        await updateSchedule.mutateAsync({
+          scheduleId: editingScheduleId,
+          payload: {
+            name: scheduleForm.name.trim(),
+            recipients: scheduleForm.recipients,
+            cronExpr,
+            overlapPolicy: scheduleForm.overlapPolicy,
+            windowMode: scheduleForm.windowMode
+          }
+        });
+        toast.success('Schedule saved');
+        closeScheduleForm();
+        return;
+      }
+
       const supportsBulkSchedule = workflowKind === 'multi_tenant' || workflowKind === 'global';
       const selectedTargets = supportsBulkSchedule
         ? scheduleTargetTenantIds.filter((targetTenantId) => targetableTenantIds.includes(targetTenantId))
@@ -278,15 +299,38 @@ export default function WorkflowDetailPage() {
         });
         toast.success('Schedule created');
       }
-      setScheduleForm((prev) => ({ ...prev, name: '', recipients: '' }));
-      setShowScheduleForm(false);
-      setSelectedPreset('');
-      setCustomCronExpr('');
+      closeScheduleForm();
     } catch (err) {
-      toast.error(err.response?.data?.error || 'Failed to create schedule');
+      toast.error(err.response?.data?.error || (editingScheduleId ? 'Failed to save schedule' : 'Failed to create schedule'));
     } finally {
       setScheduleJobProgress(null);
     }
+  };
+
+  function closeScheduleForm() {
+    setScheduleForm((prev) => ({ ...prev, name: '', recipients: '' }));
+    setShowScheduleForm(false);
+    setEditingScheduleId(null);
+    setSelectedPreset('');
+    setCustomCronExpr('');
+  }
+
+  // Loads a saved schedule into the form. A cron that matches a common schedule opens in the simple picker,
+  // anything else opens as a custom cron.
+  const handleEditSchedule = (schedule) => {
+    const presetKey = Object.keys(SCHEDULE_PRESETS).find((key) => SCHEDULE_PRESETS[key].cronExpr === schedule.cronExpr);
+    setEditingScheduleId(schedule._id);
+    setScheduleForm({
+      name: schedule.name || '',
+      recipients: (schedule.recipients || []).join(', '),
+      overlapPolicy: schedule.overlapPolicy || 'replace_running',
+      windowMode: schedule.windowMode || 'previous_complete_day'
+    });
+    setScheduleMode(presetKey ? 'simple' : 'advanced');
+    setSelectedPreset(presetKey || '');
+    setCustomCronExpr(presetKey ? '' : schedule.cronExpr || '');
+    setShowScheduleForm(true);
+    requestAnimationFrame(() => document.getElementById('schedule-form')?.scrollIntoView({ behavior: 'smooth', block: 'center' }));
   };
 
   const handlePauseSchedule = async (scheduleId) => {
@@ -333,7 +377,7 @@ export default function WorkflowDetailPage() {
   const workflowEvents = triggerEvents.filter((event) => event.matchedWorkflowId === workflowId);
   const workflowUnmatched = unmatchedAlerts.filter((alert) => alert.alertType === definition?.trigger?.alertType);
   const workflowDescription = definition?.description || 'No description';
-  const scheduleIsPending = createSchedule.isPending || createBulkSchedule.isPending;
+  const scheduleIsPending = createSchedule.isPending || createBulkSchedule.isPending || updateSchedule.isPending;
 
   const toggleScheduleTargetTenant = (targetTenantId) => {
     setScheduleTargetTenantIds((prev) => {
@@ -553,6 +597,14 @@ export default function WorkflowDetailPage() {
                           )}
                           <Button
                             size="sm"
+                            variant="secondary"
+                            onClick={() => handleEditSchedule(schedule)}
+                          >
+                            <Edit2 className="w-3 h-3 mr-1" />
+                            Edit
+                          </Button>
+                          <Button
+                            size="sm"
                             variant="ghost"
                             onClick={() => handleReplayMissed(schedule._id)}
                             loading={replayMissed.isPending}
@@ -585,12 +637,12 @@ export default function WorkflowDetailPage() {
                     Add a schedule
                   </Button>
                 ) : (
-                  <form className="space-y-5" onSubmit={handleCreateSchedule}>
+                  <form id="schedule-form" className="space-y-5" onSubmit={handleCreateSchedule}>
                     <div className="flex items-center justify-between">
-                      <h3 className="text-sm font-semibold text-gray-900">New schedule</h3>
+                      <h3 className="text-sm font-semibold text-gray-900">{editingScheduleId ? 'Edit schedule' : 'New schedule'}</h3>
                       <button
                         type="button"
-                        onClick={() => setShowScheduleForm(false)}
+                        onClick={closeScheduleForm}
                         className="text-xs text-gray-500 hover:text-gray-700"
                       >
                         Cancel
@@ -729,7 +781,7 @@ export default function WorkflowDetailPage() {
                       <p className="text-xs text-gray-500 mt-1">{OVERLAP_POLICIES[scheduleForm.overlapPolicy].description}</p>
                     </div>
 
-                    {(workflowKind === 'multi_tenant' || workflowKind === 'global') && targetableTenantIds.length > 0 && (
+                    {!editingScheduleId && (workflowKind === 'multi_tenant' || workflowKind === 'global') && targetableTenantIds.length > 0 && (
                       <div className="border border-gray-200 rounded-lg p-3">
                         <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
                           <label className="block text-sm font-medium text-gray-700">Which tenants?</label>
@@ -795,9 +847,9 @@ export default function WorkflowDetailPage() {
                     <div className="flex gap-2">
                       <Button type="submit" size="sm" className="whitespace-nowrap" loading={scheduleIsPending} disabled={!pendingCron}>
                         <CalendarPlus className="w-4 h-4 mr-2" />
-                        Create schedule
+                        {editingScheduleId ? 'Save changes' : 'Create schedule'}
                       </Button>
-                      <Button type="button" size="sm" variant="ghost" onClick={() => setShowScheduleForm(false)}>
+                      <Button type="button" size="sm" variant="ghost" onClick={closeScheduleForm}>
                         Cancel
                       </Button>
                     </div>
