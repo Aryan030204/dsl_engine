@@ -1,9 +1,7 @@
-const dns = require("dns");
+const { configureDns } = require('./server/lib/configureDns');
 
-// Force Node.js to use public DNS instead of the local 127.0.0.1 resolver
-dns.setServers(["8.8.8.8", "1.1.1.1"]);
-
-console.log("Node DNS servers:", dns.getServers());
+// Force Node.js off the local 127.0.0.1 resolver (public DNS by default, DNS_SERVERS in .env overrides)
+console.log("Node DNS servers:", configureDns());
 
 const express = require('express');
 const mongoose = require('mongoose');
