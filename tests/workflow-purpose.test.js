@@ -102,12 +102,13 @@ test('applyStateEngine records the decision on the run and never throws', async 
     save: async () => { saves += 1; }
   };
 
-  // Always-quiet window: NORMAL -> CRITICAL still goes out (direct escalation bypass).
+  // Always-quiet window: even a direct NORMAL -> CRITICAL is held (critical no longer bypasses quiet hours).
   const captured = [{ to: ['ops@example.com', 'team@example.com'], subject: 'CVR drop', html: '<p>x</p>', text: 'x' }];
   await applyStateEngine({ run, result: { context: context(-30) }, intents: captured, stateEngine });
   assert.equal(run.stateEvaluation.resulting_state, 'CRITICAL');
-  assert.equal(run.stateEvaluation.delivery_status, 'sent');
-  assert.deepEqual(sender.calls[0].to, ['ops@example.com', 'team@example.com']);
+  assert.equal(run.stateEvaluation.notification.suppressed_by, 'quiet_hours');
+  assert.equal(run.stateEvaluation.delivery_status, 'suppressed');
+  assert.equal(sender.calls.length, 0);
   assert.equal(saves, 1);
 
   const broken = { ...run, _id: 'run-2', save: async () => {} };
@@ -160,7 +161,8 @@ test('manual runs are dry runs: they preview the decision but change no state an
   const captured = [{ to: ['ops@example.com'], subject: 'CVR drop', html: '<p>x</p>', text: 'x' }];
   const makeRun = (id, extra = {}) => ({
     _id: id, tenantId: 't1', workflowId: 'wf1', triggerType: 'manual',
-    definitionJson: definition({ state_config: stateConfig }),
+    // Quiet hours off: this test is about dry-run vs live, and critical no longer bypasses quiet hours.
+    definitionJson: definition({ state_config: { ...stateConfig, quiet_hours: { enabled: false, start: '23:00', end: '07:00' } } }),
     save: async () => {}, ...extra
   });
 

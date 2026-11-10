@@ -5,6 +5,8 @@ import {
   STATE_METRIC_OPTIONS,
   getWorkflowPurpose,
   withStateConfigDefaults,
+  withStormProtectionDefaults,
+  getStormProtectionErrors,
   isLowerWorse,
 } from '../../utils/stateConfig';
 
@@ -59,7 +61,25 @@ export default function AlertStatePanel({ metadata, setMetadata }) {
     });
   };
 
-  const thresholdsValid = typeof config.thresholds.normal === 'number' && typeof config.thresholds.critical === 'number'
+  // Storm protection is policy only; runtime counters/latches live in the backend's
+  // WorkflowState and are never touched here.
+  const storm = withStormProtectionDefaults(config.storm_protection);
+  const updateStorm = (mutate) => {
+    setMetadata((m) => {
+      const current = withStateConfigDefaults(m.state_config);
+      const next = withStormProtectionDefaults(current.storm_protection);
+      mutate(next);
+      return { ...m, state_config: { ...current, storm_protection: next } };
+    });
+  };
+  const setException = (name, field, value) => updateStorm((s) => { s.exceptional_alerts[name][field] = value; });
+  const setLimit = (name, value) => updateStorm((s) => { s.daily_limits[name] = value; });
+  const stormErrors = getStormProtectionErrors(storm);
+  const exceptionHint = isLowerWorse(config.thresholds)
+    ? 'This workflow alerts on drops, so lower is worse.'
+    : 'This workflow alerts on rises, so higher is worse.';
+
+  const thresholdsValid =typeof config.thresholds.normal === 'number' && typeof config.thresholds.critical === 'number'
     && config.thresholds.normal !== config.thresholds.critical;
   let thresholdHint = "Use the metric's signed value, e.g. -10 / -20 for a drop";
   if (thresholdsValid) {
@@ -213,6 +233,112 @@ export default function AlertStatePanel({ metadata, setMetadata }) {
                       />
                     </Field>
                   </>
+                )}
+              </div>
+
+              <div className="w-full border-t border-gray-100 pt-3 space-y-3">
+                <label className="flex items-center gap-2 text-sm text-gray-700">
+                  <input
+                    type="checkbox"
+                    checked={storm.enabled}
+                    onChange={(e) => updateStorm((s) => { s.enabled = e.target.checked; })}
+                  />
+                  <span className="font-medium">Storm protection</span>
+                  <span className="text-xs text-gray-500">Cap how many alerts a persistent problem can send per day</span>
+                </label>
+
+                {storm.enabled && (
+                  <div className="pl-6 space-y-3">
+                    <div>
+                      <div className="text-xs font-medium text-gray-600 mb-1">Daily alert limits</div>
+                      <div className="flex flex-wrap gap-x-6 gap-y-2">
+                        {[['triggered', 'Triggered'], ['critical', 'Critical'], ['total', 'Total']].map(([name, label]) => {
+                          const limited = storm.daily_limits[name] !== null;
+                          return (
+                            <div key={name} className="flex items-center gap-2 text-sm text-gray-700">
+                              <label className="flex items-center gap-1.5">
+                                <input
+                                  type="checkbox"
+                                  checked={limited}
+                                  onChange={(e) => setLimit(name, e.target.checked ? 3 : null)}
+                                />
+                                {label}
+                              </label>
+                              {limited ? (
+                                <input
+                                  type="number" min="1" step="1" className={numberInputClass}
+                                  value={storm.daily_limits[name]}
+                                  onChange={(e) => setLimit(name, toNumberOrEmpty(e.target.value))}
+                                />
+                              ) : (
+                                <span className="text-xs text-gray-400">Unlimited</span>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                      <span className="text-[11px] text-gray-400">
+                        Per tenant-local calendar day (resets at local midnight). Only delivered alerts count.
+                      </span>
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className="flex items-center gap-2 text-sm text-gray-700">
+                        <input
+                          type="checkbox"
+                          checked={storm.exceptional_alerts.enabled}
+                          onChange={(e) => updateStorm((s) => { s.exceptional_alerts.enabled = e.target.checked; })}
+                        />
+                        <span className="font-medium">Exceptional alerts</span>
+                        <span className="text-xs text-gray-500">Each kind may bypass an exhausted daily limit once per day. {exceptionHint}</span>
+                      </label>
+
+                      {storm.exceptional_alerts.enabled && (
+                        <div className="pl-6 flex flex-wrap gap-x-8 gap-y-3">
+                          <div className="flex items-start gap-2">
+                            <Field label="Absolute value" hint="Metric value at which an alert can bypass an exhausted daily limit">
+                              <div className="flex items-center gap-2">
+                                <input
+                                  type="checkbox"
+                                  checked={storm.exceptional_alerts.absolute.enabled}
+                                  onChange={(e) => setException('absolute', 'enabled', e.target.checked)}
+                                />
+                                <input
+                                  type="number" step="any" className={numberInputClass}
+                                  disabled={!storm.exceptional_alerts.absolute.enabled}
+                                  value={storm.exceptional_alerts.absolute.value ?? ''}
+                                  onChange={(e) => setException('absolute', 'value', toNumberOrEmpty(e.target.value))}
+                                />
+                              </div>
+                            </Field>
+                          </div>
+                          <div className="flex items-start gap-2">
+                            <Field label="Deterioration" hint="Minimum worsening from the previous valid finding (positive)">
+                              <div className="flex items-center gap-2">
+                                <input
+                                  type="checkbox"
+                                  checked={storm.exceptional_alerts.difference.enabled}
+                                  onChange={(e) => setException('difference', 'enabled', e.target.checked)}
+                                />
+                                <input
+                                  type="number" min="0" step="any" className={numberInputClass}
+                                  disabled={!storm.exceptional_alerts.difference.enabled}
+                                  value={storm.exceptional_alerts.difference.value ?? ''}
+                                  onChange={(e) => setException('difference', 'value', toNumberOrEmpty(e.target.value))}
+                                />
+                              </div>
+                            </Field>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {stormErrors.length > 0 && (
+                      <ul className="text-[11px] text-red-600 list-disc pl-4">
+                        {stormErrors.map((error) => <li key={error}>{error}</li>)}
+                      </ul>
+                    )}
+                  </div>
                 )}
               </div>
             </div>

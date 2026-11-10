@@ -135,6 +135,7 @@ function summarize(evaluation, delivery) {
     trigger_type: evaluation.trigger_type,
     finding: evaluation.finding,
     notification: evaluation.notification,
+    ...(evaluation.decision?.storm ? { storm: evaluation.decision.storm } : {}),
     delivery_status: delivery?.status || evaluation.delivery?.status || 'none',
     delivery_error: delivery?.error || evaluation.delivery?.error || null,
     telegram_status: delivery?.telegram?.status || evaluation.delivery?.telegram?.status || null,
@@ -266,7 +267,10 @@ function createStateEngineService({
 
       const fields = {
         cooldown: decision.prior_bookkeeping.cooldown || null,
-        last_alert_at: decision.prior_bookkeeping.last_alert_at || null
+        last_alert_at: decision.prior_bookkeeping.last_alert_at || null,
+        // Storm-protection quota and exception latches are consumed by delivery, so an
+        // alert nobody received hands them back too.
+        ...(decision.storm ? { storm: decision.prior_bookkeeping.storm || null } : {})
       };
       if (await store.compareAndSetState(tenantId, workflowId, current.version ?? 0, fields)) return true;
     }

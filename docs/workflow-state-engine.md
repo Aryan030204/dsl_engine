@@ -106,7 +106,7 @@ in the run request body) to make a manual run live.
 | NORMAL → NORMAL | none | – | – |
 | TRIGGERED/CRITICAL → NORMAL | **none**: the state changes silently | – | – |
 | NORMAL → TRIGGERED | INITIAL_TRIGGER | TRIGGERED | applies |
-| NORMAL → CRITICAL | ESCALATION | **bypassed** | **bypassed** |
+| NORMAL → CRITICAL | ESCALATION | **bypassed** | applies |
 | TRIGGERED → CRITICAL | ESCALATION | **bypassed** | applies |
 | TRIGGERED → TRIGGERED | REMINDER | TRIGGERED | applies |
 | CRITICAL → CRITICAL | REMINDER | CRITICAL | applies |
@@ -191,3 +191,25 @@ Testing an alert used to mean clearing the workflow's state in MongoDB. The **Ru
 - Testing mode replaces "Send notifications and update alert state", and only manual runs can be test runs (scheduled and
   alert-triggered runs never are). A rerun of a test run is a normal run again.
 - The run page shows a "Test run" note and the runs list a "Test" badge.
+
+## Alert storm protection (optional, per workflow)
+
+`state_config.storm_protection` adds a daily quota and an exceptional-deterioration bypass **after** the existing cooldown and quiet-hours gates. It never changes state classification, cooldowns or thresholds. Absent or `enabled: false` = behaviour identical to before.
+
+```json
+"storm_protection": {
+  "enabled": true,
+  "daily_limits": { "triggered": 3, "critical": 3, "total": 6 },
+  "exceptional_alerts": {
+    "enabled": true,
+    "absolute": { "enabled": true, "value": -50 },
+    "difference": { "enabled": true, "value": 15 }
+  }
+}
+```
+
+- Limits are `null` (unlimited) or whole numbers >= 1, counted per **tenant-local calendar day** (resets at local midnight, not a rolling 24h). Only delivered alerts count: a send nobody received hands the quota and latches back, like the cooldown.
+- A candidate that passes cooldown and quiet hours but hits an exhausted limit is held with `suppressed_by: "daily_limit"`; the state transition is still saved and no cooldown starts. Escalations still bypass cooldown but are subject to the quota.
+- Exceptional bypass (only when the quota is exhausted; cooldown and quiet hours still apply): `absolute` fires when the value is at/beyond the configured value in the workflow's worse direction; `difference` fires when deterioration from the previous conclusive finding (`prev - current` for drops, `current - prev` for rises) is >= the configured value. Each kind fires at most once per local day (latch). Both true in one run = one notification with both reasons. Exceptional sends are marked `notification.exceptional` and still count toward the counters.
+- Runtime state lives in `WorkflowState.storm` (`day`, `*_count`, `absolute_fired`, `difference_fired`) and `last_value`. It is backend-owned, written in the same version-CAS as the state transition (so concurrent workers cannot over-consume), and is never part of workflow config or editable from the UI.
+- UI: Workflow builder -> Alert state panel -> Storm protection.

@@ -71,6 +71,47 @@ export function withStateConfigDefaults(config) {
     thresholds: toSignedThresholds(source),
     cooldown: { ...DEFAULT_STATE_CONFIG.cooldown, ...(source.cooldown || {}) },
     quiet_hours: { ...DEFAULT_STATE_CONFIG.quiet_hours, ...(source.quiet_hours || {}) },
+    // Only carried when the workflow already has one, so a workflow without storm
+    // protection is saved exactly as before.
+    ...(source.storm_protection ? { storm_protection: withStormProtectionDefaults(source.storm_protection) } : {}),
+  };
+}
+
+// Policy only: mirrors server/lib/stateEngine/defaults.js normalizeStormProtection's shape.
+// Runtime bookkeeping (WorkflowState.storm counters / latches, last_value) is backend-owned
+// and is deliberately never read, kept or written here. Values of disabled toggles are
+// preserved so re-enabling restores them; a null limit means unlimited.
+export const DEFAULT_STORM_PROTECTION = {
+  enabled: false,
+  daily_limits: { triggered: null, critical: null, total: null },
+  exceptional_alerts: {
+    enabled: false,
+    absolute: { enabled: false, value: null },
+    difference: { enabled: false, value: null },
+  },
+};
+
+export function withStormProtectionDefaults(storm) {
+  const s = storm || {};
+  const d = DEFAULT_STORM_PROTECTION;
+  const exc = s.exceptional_alerts || {};
+  const limit = (v) => (v === undefined || v === null ? null : v);
+  const item = (raw, def) => ({
+    enabled: raw?.enabled === true,
+    value: raw?.value === undefined ? def.value : raw.value,
+  });
+  return {
+    enabled: s.enabled === true,
+    daily_limits: {
+      triggered: limit(s.daily_limits?.triggered),
+      critical: limit(s.daily_limits?.critical),
+      total: limit(s.daily_limits?.total),
+    },
+    exceptional_alerts: {
+      enabled: exc.enabled === true,
+      absolute: item(exc.absolute, d.exceptional_alerts.absolute),
+      difference: item(exc.difference, d.exceptional_alerts.difference),
+    },
   };
 }
 
@@ -125,6 +166,31 @@ export function getStateConfigErrors(workflowJson = {}) {
       errors.push('Quiet hours must be HH:MM (24h)');
     }
   }
+
+  errors.push(...getStormProtectionErrors(config.storm_protection));
+  return errors;
+}
+
+// Mirrors validateStormProtection in server/validation/workflowDefinition.js. Limits are
+// null (unlimited) or a whole number >= 1; an enabled exception needs a finite value
+// (difference: > 0). The server stays authoritative.
+export function getStormProtectionErrors(storm) {
+  const errors = [];
+  if (!storm || typeof storm !== 'object') return errors;
+  const labels = { triggered: 'Triggered', critical: 'Critical', total: 'Total' };
+  Object.keys(labels).forEach((field) => {
+    const value = storm.daily_limits?.[field];
+    if (value !== undefined && value !== null && !isWholeAtLeast(value, 1)) {
+      errors.push(`${labels[field]} daily limit must be a whole number of at least 1, or unlimited`);
+    }
+  });
+  const exc = storm.exceptional_alerts;
+  if (exc?.absolute?.enabled === true && !isNumber(exc.absolute.value)) {
+    errors.push('Absolute exception value must be a number');
+  }
+  if (exc?.difference?.enabled === true && !(isNumber(exc.difference.value) && exc.difference.value > 0)) {
+    errors.push('Deterioration exception value must be a positive number');
+  }
   return errors;
 }
 
@@ -144,6 +210,7 @@ export const NOTIFICATION_REASON_LABELS = {
 export const SUPPRESSION_LABELS = {
   cooldown: 'Cooldown active',
   quiet_hours: 'Quiet hours',
+  daily_limit: 'Daily alert limit reached',
 };
 
 export const DELIVERY_LABELS = {

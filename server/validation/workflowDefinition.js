@@ -495,6 +495,64 @@ function validateStateConfig(definition, errors) {
       });
     }
   }
+
+  validateStormProtection(config.storm_protection, errors);
+}
+
+// Alert storm protection: daily quota + exceptional bypass. Optional; absent = disabled.
+// Limits are null (unlimited) or a whole number >= 1. Values are checked whenever present
+// and enabled, so a disabled toggle can keep a stale value without blocking a save.
+function validateStormProtection(storm, errors) {
+  if (storm === undefined || storm === null) return;
+  const isObj = (v) => v && typeof v === 'object' && !Array.isArray(v);
+  if (!isObj(storm)) {
+    errors.push('state_config.storm_protection must be an object');
+    return;
+  }
+  if (storm.enabled !== undefined && typeof storm.enabled !== 'boolean') {
+    errors.push('state_config.storm_protection.enabled must be a boolean');
+  }
+
+  const limits = storm.daily_limits;
+  if (limits !== undefined && limits !== null) {
+    if (!isObj(limits)) {
+      errors.push('state_config.storm_protection.daily_limits must be an object');
+    } else {
+      ['triggered', 'critical', 'total'].forEach((field) => {
+        const value = limits[field];
+        if (value !== undefined && value !== null && !(Number.isInteger(value) && value >= 1)) {
+          errors.push(`state_config.storm_protection.daily_limits.${field} must be a whole number >= 1, or null for unlimited`);
+        }
+      });
+    }
+  }
+
+  const exc = storm.exceptional_alerts;
+  if (exc === undefined || exc === null) return;
+  if (!isObj(exc)) {
+    errors.push('state_config.storm_protection.exceptional_alerts must be an object');
+    return;
+  }
+  if (exc.enabled !== undefined && typeof exc.enabled !== 'boolean') {
+    errors.push('state_config.storm_protection.exceptional_alerts.enabled must be a boolean');
+  }
+  [['absolute', false], ['difference', true]].forEach(([name, mustBePositive]) => {
+    const item = exc[name];
+    if (item === undefined || item === null) return;
+    if (!isObj(item)) {
+      errors.push(`state_config.storm_protection.exceptional_alerts.${name} must be an object`);
+      return;
+    }
+    if (item.enabled !== undefined && typeof item.enabled !== 'boolean') {
+      errors.push(`state_config.storm_protection.exceptional_alerts.${name}.enabled must be a boolean`);
+    }
+    if (item.enabled === true) {
+      const ok = typeof item.value === 'number' && Number.isFinite(item.value) && (!mustBePositive || item.value > 0);
+      if (!ok) {
+        errors.push(`state_config.storm_protection.exceptional_alerts.${name}.value must be a ${mustBePositive ? 'positive ' : ''}number`);
+      }
+    }
+  });
 }
 
 const DEFAULT_INVENTORY_OUTPUT_KEY = 'inventory_top_products';
