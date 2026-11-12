@@ -137,6 +137,7 @@ function buildReportViewModel({ context, template, branding }) {
     return {
       title: table.title,
       tone: table.tone || 'neutral',
+      emptyMessage: emptyTableMessage(table),
       columns: table.columns.map((column) => ({ label: column.label })),
       rows: source.slice(0, table.limit).map((entry, index) => ({
         rank: index + 1,
@@ -263,7 +264,25 @@ function renderMetricCards(metrics, primaryColor) {
   return `<div class="rpt-kpis" style="font-size:0;border-top:1px solid #e5e7eb;border-left:1px solid #e5e7eb;border-radius:8px;overflow:hidden;">${cards}</div>`;
 }
 
+// What an empty table says in place of a blank grid. Each breakdown gets its own line, named for what it
+// looked at, so "no sources" and "no products" read as separate findings.
+const EMPTY_TABLE_SUBJECTS = [
+  [/utm_source/i, 'No traffic source stood out for this period.'],
+  [/utm_campaign/i, 'No campaign stood out for this period.'],
+  [/utm_medium/i, 'No traffic medium stood out for this period.'],
+  [/product/i, 'No product stood out for this period.'],
+];
+function emptyTableMessage(table) {
+  if (typeof table.emptyMessage === 'string' && table.emptyMessage.trim()) return table.emptyMessage.trim();
+  const match = EMPTY_TABLE_SUBJECTS.find(([pattern]) => pattern.test(String(table.source || '')));
+  return match ? match[1] : 'No data available for this period.';
+}
+
 function renderTable(table, primaryColor) {
+  if (!table.rows.length) {
+    const emptyColor = table.tone === 'negative' ? '#ef2929' : table.tone === 'positive' ? primaryColor : '#374151';
+    return `<div class="rpt-panel" style="margin-top:20px;border:1px solid #e5e7eb;border-radius:8px;padding:20px;"><div class="rpt-panel-title" style="font-size:16px;font-weight:800;color:${emptyColor};text-transform:uppercase;">${escapeHtml(table.title)}</div><div style="margin-top:10px;font-size:14px;color:#6b7280;">${escapeHtml(table.emptyMessage || 'No data available for this period.')}</div></div>`;
+  }
   const toneColor = table.tone === 'negative' ? '#ef2929' : table.tone === 'positive' ? primaryColor : '#374151';
   const header = [`<th class="rpt-th rpt-th-rank" align="left" style="padding:10px;width:36px;color:#4b5563;font-size:11px;">#</th>`, ...table.columns.map((column) => `<th class="rpt-th" align="left" style="padding:10px;color:#4b5563;font-size:11px;text-transform:uppercase;white-space:nowrap;">${escapeHtml(column.label)}</th>`)].join('');
   const rows = table.rows.length ? table.rows.map((row) => `<tr style="border-top:1px solid #e5e7eb;"><td class="rpt-td" style="padding:13px 10px;"><span class="rpt-rank" style="display:inline-block;width:25px;height:25px;line-height:25px;text-align:center;border-radius:3px;background:${toneColor};color:#fff;font-weight:700;">${row.rank}</span></td>${row.cells.map((cell) => `<td class="rpt-td${cell.format === 'text' ? ' rpt-td-text' : ''}" style="padding:13px 10px;font-size:14px;color:${cell.format === 'delta_percent' ? changeColor(cell.numericValue) : '#111827'};font-weight:${cell.format === 'delta_percent' ? '700' : '500'};${cell.format === 'text' ? 'word-break:normal;overflow-wrap:break-word;' : 'white-space:nowrap;'}">${cell.format === 'status' ? renderStatusChip(cell.value) : `${cell.format === 'delta_percent' ? (cell.numericValue > 0 ? '↑&nbsp;' : cell.numericValue < 0 ? '↓&nbsp;' : '—&nbsp;') : ''}${escapeHtml(cell.value)}`}</td>`).join('')}</tr>`).join('') : `<tr style="border-top:1px solid #e5e7eb;"><td colspan="${table.columns.length + 1}" align="center" style="padding:22px;color:#6b7280;font-size:13px;">No data available</td></tr>`;
@@ -463,7 +482,7 @@ function renderReportEmail({ context, template, branding, subject }) {
     '',
     ...view.metrics.map((metric) => `${metric.label}: ${metric.value}${metric.change == null ? '' : ` (${metric.change})`}`),
     ...(view.insight ? ['', `Key takeaway: ${view.insight.summary}`] : []),
-    ...view.tables.flatMap((table) => ['', table.title, ...(table.rows.length ? table.rows.map((row) => `${row.rank}. ${row.cells.map((cell, index) => `${table.columns[index].label}: ${cell.value}`).join(' | ')}`) : ['No data available'])]),
+    ...view.tables.flatMap((table) => ['', table.title, ...(table.rows.length ? table.rows.map((row) => `${row.rank}. ${row.cells.map((cell, index) => `${table.columns[index].label}: ${cell.value}`).join(' | ')}`) : [table.emptyMessage || 'No data available for this period.'])]),
     ...(inventory ? ['', 'Inventory report', ...inventory.textLines] : []),
   ].filter((line) => line !== undefined && line !== null).join('\n');
 

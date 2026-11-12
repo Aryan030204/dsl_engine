@@ -227,3 +227,17 @@ test('validation accepts a report insightSource and rejects an unsafe one', () =
   assert.equal(validateWorkflowDefinition(workflowWithEmail(node('scratch.finalInsight'))).ok, true);
   assert.ok(validateWorkflowDefinition(workflowWithEmail(node('__proto__.x'))).errors.some((e) => /insightSource/.test(e)));
 });
+
+test('an empty breakdown table is one line under its heading, worded per breakdown', () => {
+  const ctx = context({ breakdowns: { cvr_utm_source_drops: [], cvr_utm_campaign_drops: [], orders_product_id_drops: [] } });
+  for (const [source, line] of [
+    ['breakdowns.cvr_utm_source_drops', 'No traffic source stood out for this period.'],
+    ['breakdowns.cvr_utm_campaign_drops', 'No campaign stood out for this period.'],
+    ['breakdowns.orders_product_id_drops', 'No product stood out for this period.'],
+  ]) {
+    const rendered = renderEmail({ format: 'report', context: ctx, template: reportTemplate(source), subject: 'Report' });
+    assert.ok(rendered.html.includes(line), source);
+    assert.ok(rendered.text.includes(line), `${source} (text)`);
+    assert.doesNotMatch(rendered.html, /<thead>/);
+  }
+});

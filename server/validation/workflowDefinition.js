@@ -329,7 +329,7 @@ function validateEmailTemplate(node, prefix, errors) {
           rejectUnknownFields(column, new Set(['label', 'path', 'format']), columnLabel, errors);
         });
       }
-      rejectUnknownFields(table, new Set(['title', 'source', 'tone', 'limit', 'columns']), label, errors);
+      rejectUnknownFields(table, new Set(['title', 'source', 'tone', 'limit', 'columns', 'emptyMessage']), label, errors);
     });
   }
   if (node.template.insightSource !== undefined) {

@@ -108,7 +108,8 @@ test('COD workflow on a calm day: score below 1, so the state engine stays NORMA
   assert.equal(context.metrics.cod_alert_score, 0);
   assert.equal(classifySeverity(context.metrics.cod_alert_score, codWorkflow.state_config.thresholds), 'NORMAL');
   const rendered = render(codWorkflow, 'cod_email', context);
-  assert.match(rendered.html, /No data available/, 'an empty triggered-products table still renders');
+  assert.match(rendered.html, /No product stood out for this period/, 'an empty triggered-products table says so in one line');
+  assert.doesNotMatch(rendered.html, /No data available/);
 });
 
 // ------------------------------------------------------------------ discount
