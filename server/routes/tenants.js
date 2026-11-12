@@ -82,7 +82,9 @@ router.get('/:tenantId/runs', async (req, res, next) => {
       ? Math.min(requestedLimit, 200)
       : 50;
 
+    // List fields only (plus the workflow name the page shows), not the whole run document.
     const runs = await WorkflowRun.find({ tenantId })
+      .select('-nodeOutputs -executionTrace -metrics -context -definitionJson.nodes -definitionJson.trigger')
       .sort({ startedAt: -1, createdAt: -1 })
       .limit(limit)
       .lean();

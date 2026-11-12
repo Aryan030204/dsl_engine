@@ -26,6 +26,24 @@ const WorkflowStateSchema = new mongoose.Schema(
     last_evaluated_at: { type: Date, default: null },
     last_alert_at: { type: Date, default: null },
     last_execution_id: { type: String, default: null },
+    // Previous conclusive finding value (source for the storm-protection difference exception).
+    last_value: { type: Number, default: null },
+    // Storm-protection runtime bookkeeping for the tenant-local day `day`: delivered-alert
+    // counters and the once-per-day exception latches. Backend-owned; never workflow config.
+    storm: {
+      type: new mongoose.Schema(
+        {
+          day: { type: String },
+          triggered_count: { type: Number, default: 0 },
+          critical_count: { type: Number, default: 0 },
+          total_count: { type: Number, default: 0 },
+          absolute_fired: { type: Boolean, default: false },
+          difference_fired: { type: Boolean, default: false }
+        },
+        { _id: false }
+      ),
+      default: null
+    },
     // Full decision of the execution that last wrote this doc, so a retry of that
     // execution can recover its decision even if the audit row write never landed.
     last_decision: { type: mongoose.Schema.Types.Mixed, default: null },

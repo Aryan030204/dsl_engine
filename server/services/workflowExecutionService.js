@@ -1,3 +1,4 @@
+const { runWithQueryCache } = require('../../sql/QueryExecutor');
 const WorkflowRun = require('../models/WorkflowRun');
 const Insight = require('../models/Insight');
 const { pruneWorkflowRuns } = require('../lib/retention');
@@ -52,13 +53,32 @@ function prepareNotificationMode(definition) {
 // engine would decide but change no state and send nothing. Scheduled and alert-triggered
 // runs are always live.
 function isDryRun(run) {
-  return run.triggerType === 'manual' && run.notifyLive !== true;
+  return run.triggerType === 'manual' && run.notifyLive !== true && run.testMode !== true;
 }
 
 async function applyStateEngine({ run, result, intents, telegramIntents = [], stateEngine = getDefaultStateEngineService() }) {
   const definition = run.definitionJson || {};
   const meta = result.context?.meta || {};
   try {
+    // Testing mode: send what the run produced, ignoring alert state / cooldown / quiet hours, saving none.
+    if (run.testMode === true && run.triggerType === 'manual') {
+      run.stateEvaluation = await stateEngine.deliverTestExecution({
+        tenantId: run.tenantId,
+        workflowId: run.workflowId,
+        context: result.context,
+        config: definition.state_config,
+        intents,
+        telegramIntents,
+        audience: run.testAudience === 'team' ? 'team' : 'me',
+        fallbackRecipients: meta.recipientOverride?.length ? meta.recipientOverride : collectWorkflowRecipients(definition),
+        workflowName: meta.workflowName || definition.name,
+        brandName: meta.brandName,
+        branding: meta.emailBranding
+      });
+      run.stateEvaluationError = null;
+      await run.save();
+      return;
+    }
     if (isDryRun(run)) {
       run.stateEvaluation = await stateEngine.previewExecution({
         tenantId: run.tenantId,
@@ -163,6 +183,22 @@ function applyRecipientOverride(sender, recipients) {
   return (message) => sender({ ...message, to: recipients });
 }
 
+const wrapForTestMode = (sender, testMode, wrap) => (testMode ? wrap(sender) : sender);
+
+// Testing mode marks every message it sends, so a test can't be mistaken for a real alert.
+const TEST_PREFIX = '[TEST] ';
+function prefixTestSubject(sender) {
+  if (!sender) return sender;
+  return (message) => sender({
+    ...message,
+    subject: String(message?.subject || '').startsWith(TEST_PREFIX) ? message.subject : `${TEST_PREFIX}${message?.subject || ''}`
+  });
+}
+function prefixTestTelegram(sender) {
+  if (!sender) return sender;
+  return (message) => sender({ ...message, title: `${TEST_PREFIX}${message?.title || ''}` });
+}
+
 async function executeRun({ run, runId }) {
   const targetRun = run || await WorkflowRun.findById(runId);
   if (!targetRun) {
@@ -183,6 +219,8 @@ async function executeRun({ run, runId }) {
     return !current || current.status === 'canceled';
   };
   const recipientOverride = targetRun.context.meta.recipientOverride;
+  const testMode = targetRun.testMode === true && targetRun.triggerType === 'manual';
+  const testAudience = targetRun.testAudience === 'team' ? 'team' : 'me';
   const runner = new WorkflowRunner(targetRun.definitionJson, {
     shouldStop: isCanceled,
     timeoutMs,
@@ -192,21 +230,27 @@ async function executeRun({ run, runId }) {
     workflowIdentity: `${targetRun.tenantId}/${targetRun.workflowId}@${targetRun.version}`,
     // State-engine workflows capture sends (filtered per person when delivered). Everything else sends
     // inline, so pause / mute are applied here.
-    emailSender: applyRecipientOverride(
+    emailSender: wrapForTestMode(applyRecipientOverride(
       notificationMode.capture?.sender
-        || getDefaultRecipientPolicy().createPreferenceAwareSender(
-          (message) => require('./emailService').sendEmail(message),
-          { tenantId: targetRun.tenantId, workflowId: targetRun.workflowId }
-        ),
+        || (testMode && testAudience === 'me'
+          // the tester's own mailbox: pause / mute does not apply
+          ? (message) => require('./emailService').sendEmail(message)
+          : getDefaultRecipientPolicy().createPreferenceAwareSender(
+            (message) => require('./emailService').sendEmail(message),
+            { tenantId: targetRun.tenantId, workflowId: targetRun.workflowId }
+          )),
       recipientOverride
-    ),
-    telegramSender: notificationMode.capture?.telegramSender
+    ), testMode, prefixTestSubject),
+    telegramSender: testMode && testAudience === 'me'
+      // "Only me" never messages the team on Telegram (MessagingNode treats `skipped` as a pass)
+      ? async () => ({ status: 'skipped', provider: 'test_mode' })
+      : wrapForTestMode(notificationMode.capture?.telegramSender, testMode, prefixTestTelegram)
   });
 
   const startedAt = targetRun.startedAt || new Date();
 
   try {
-    const result = await executeWithTimeout(runner.executeWorkflow(targetRun.context), timeoutMs, { isCanceled });
+    const result = await runWithQueryCache(() => executeWithTimeout(runner.executeWorkflow(targetRun.context), timeoutMs, { isCanceled }));
 
     // Cancelled while its last node was running: leave it `canceled`, record nothing, notify no one.
     if (await isCanceled()) throw createRunCanceledError();

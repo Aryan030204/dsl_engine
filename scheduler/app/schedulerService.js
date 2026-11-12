@@ -14,7 +14,7 @@ const {
 } = require('./cronUtils');
 const { enqueueRun } = require('./runQueueService');
 const { resolveWorkflowVersion } = require('../../server/services/workflowExecutionService');
-const { buildWorkflowVersionQuery } = require('../../server/services/workflowResolverService');
+const { loadLatestDefinitions } = require('../../server/services/workflowResolverService');
 const { SCHEDULE_WINDOW_MODES } = require('./scheduleWindowModes');
 
 async function getWorkflowCandidates(tenantId, includeGlobal = true) {
@@ -27,16 +27,7 @@ async function getWorkflowCandidates(tenantId, includeGlobal = true) {
   }
 
   const workflows = await Workflow.find({ $or: clauses }).lean();
-  const candidates = await Promise.all(workflows.map(async (workflow) => {
-    const version = await WorkflowVersion.findOne(
-      buildWorkflowVersionQuery(workflow, workflow.workflowId, workflow.latestVersion)
-    ).lean();
-
-    return {
-      workflow,
-      definition: version?.definitionJson || null
-    };
-  }));
+  const candidates = await loadLatestDefinitions(workflows);
 
   return candidates.filter(item => item.definition);
 }

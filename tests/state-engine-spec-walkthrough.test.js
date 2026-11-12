@@ -42,7 +42,7 @@ test('spec §30: runs 1-6 of workflow W, with no recovery email at the end', () 
   assert.equal(run6.notification.should_send, false);
 });
 
-test('spec §32: quiet hours hold N->T and T->C but not a direct N->C', () => {
+test('quiet hours hold N->T, T->C and a direct N->C (critical no longer bypasses)', () => {
   const [enter, escalate] = runSequence([
     { value: -17, at: '2026-01-01T23:30:00Z' },
     { value: -28, at: '2026-01-02T01:00:00Z' }
@@ -53,8 +53,13 @@ test('spec §32: quiet hours hold N->T and T->C but not a direct N->C', () => {
   assert.equal(escalate.notification.suppressed_by, 'quiet_hours');
 
   const direct = step(null, -28, { at: '2026-01-02T01:00:00Z', config: quietConfig });
-  assert.equal(direct.notification.reason, 'ESCALATION');
-  assert.equal(direct.quiet_hours.bypassed, true);
+  assert.equal(direct.next.state, 'CRITICAL');
+  assert.equal(direct.notification.candidate_reason, 'ESCALATION');
+  assert.equal(direct.notification.should_send, false);
+  assert.equal(direct.notification.suppressed_by, 'quiet_hours');
+  assert.equal(direct.quiet_hours.bypassed, false);
+  // Held, so no cooldown starts.
+  assert.equal(direct.next.cooldown, null);
 });
 
 test('spec §17: same-state reminders are held during quiet hours', () => {

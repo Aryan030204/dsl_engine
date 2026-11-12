@@ -12,10 +12,17 @@ const baselineWindow = { start: '2026-09-13 00:00:00', end: '2026-09-14 00:00:00
 
 test('sales tables are only queried when sales or aov is requested', () => {
   const plain = metricQuery({ tenantId: 'TMC', metrics: ['cvr', 'orders'], window, baselineWindow, timezone: 'UTC' });
-  assert.doesNotMatch(plain.sql, /hour_wise_sales|overall_summary/);
-  // sessions (2 windows x 4: date range + exact hour bounds) + orders (2 windows x 4), no payment, no sales
-  assert.equal(plain.params.length, 16);
+  // no sales table, and whole days read sessions and orders from the daily summary
+  assert.doesNotMatch(plain.sql, /hour_wise_sales|total_sales/);
+  assert.match(plain.sql, /FROM overall_summary/);
+  assert.doesNotMatch(plain.sql, /hourly_sessions_summary_shopify|shopify_orders/);
+  // sessions (2 windows x 2: start day, end day) + orders (2 windows x 2), no payment, no sales
+  assert.equal(plain.params.length, 8);
   assert.equal(plain.meta.salesSources, null);
+  assert.deepEqual(plain.meta.kpiSources, {
+    sessions: { current: 'overall_summary', baseline: 'overall_summary' },
+    orders: { current: 'overall_summary', baseline: 'overall_summary' }
+  });
 });
 
 test('payment-type orders are only queried when a payment metric is requested', () => {
@@ -31,8 +38,8 @@ test('payment-type orders are only queried when a payment metric is requested', 
     assert.match(q.sql, /baseline_payment_orders AS/);
     assert.match(q.sql, /cpo\.cod_orders AS current_cod_orders/);
     assert.equal((q.sql.match(/\?/g) || []).length, q.params.length);
-    // payment-type orders add one (date range + exact bounds) group per window after sessions and orders
-    assert.deepEqual(q.params.slice(16, 24), [
+    // payment-type orders add one (date range + exact bounds) group per window after the daily-summary sessions and orders
+    assert.deepEqual(q.params.slice(8, 16), [
       '2026-09-14 00:00:00', '2026-09-15 00:00:00', '2026-09-14 00:00:00', '2026-09-15 00:00:00',
       '2026-09-13 00:00:00', '2026-09-14 00:00:00', '2026-09-13 00:00:00', '2026-09-14 00:00:00'
     ]);
@@ -53,7 +60,7 @@ test('complete-day windows read sales from overall_summary by date', () => {
     assert.doesNotMatch(q.sql, /hour_wise_sales/);
     assert.match(q.sql, /SUM\(total_orders\)/);
     // [date >= start day, date < end day] for current, then baseline.
-    assert.deepEqual(q.params.slice(16), ['2026-09-14', '2026-09-15', '2026-09-13', '2026-09-14']);
+    assert.deepEqual(q.params.slice(8), ['2026-09-14', '2026-09-15', '2026-09-13', '2026-09-14']);
   }
 });
 
@@ -90,7 +97,12 @@ test('the source is chosen per window: partial today vs complete baseline days',
   });
   assert.deepEqual(q.meta.salesSources, { current: 'hour_wise_sales', baseline: 'overall_summary' });
   assert.ok(q.sql.indexOf('current_sales AS') < q.sql.indexOf('baseline_sales AS'));
-  assert.deepEqual(q.params.slice(16), ['2026-09-24 00:00:00', '2026-09-24 14:00:00', '2026-09-24 00:00:00', '2026-09-24 14:00:00', '2026-08-25', '2026-09-24']);
+  assert.deepEqual(q.meta.kpiSources, {
+    sessions: { current: 'hourly', baseline: 'overall_summary' },
+    orders: { current: 'shopify_orders', baseline: 'overall_summary' }
+  });
+  // sessions: hourly current (4) + summary baseline (2); orders the same; then sales
+  assert.deepEqual(q.params.slice(12), ['2026-09-24 00:00:00', '2026-09-24 14:00:00', '2026-09-24 00:00:00', '2026-09-24 14:00:00', '2026-08-25', '2026-09-24']);
 });
 
 test('UTC ISO windows are classified in the tenant timezone', () => {
@@ -101,7 +113,8 @@ test('UTC ISO windows are classified in the tenant timezone', () => {
     baselineWindow: { start: '2026-09-22T18:30:00.000Z', end: '2026-09-23T18:30:00.000Z' }
   });
   assert.deepEqual(q.meta.salesSources, { current: 'overall_summary', baseline: 'overall_summary' });
-  assert.deepEqual(q.params.slice(16), ['2026-09-24', '2026-09-25', '2026-09-23', '2026-09-24']);
+  assert.deepEqual(q.params.slice(8), ['2026-09-24', '2026-09-25', '2026-09-23', '2026-09-24']);
+  assert.deepEqual(q.params.slice(0, 4), ['2026-09-24', '2026-09-25', '2026-09-23', '2026-09-24']);
 });
 
 async function runCompare(metrics, row) {
@@ -242,12 +255,33 @@ test('table numbers never wrap (a change stays with its arrow); text cells may w
 });
 
 test('orders are filtered with an index-friendly created_date range plus the exact created_at bounds', () => {
-  const q = metricQuery({ tenantId: 'TMC', metrics: ['cvr', 'orders'], window, baselineWindow, timezone: 'UTC' });
+  const partial = { start: '2026-09-14 00:00:00', end: '2026-09-14 14:00:00' };
+  const partialBaseline = { start: '2026-09-13 00:00:00', end: '2026-09-13 14:00:00' };
+  const q = metricQuery({ tenantId: 'TMC', metrics: ['cvr', 'orders'], window: partial, baselineWindow: partialBaseline, timezone: 'UTC' });
   assert.match(q.sql, /created_date >= LEFT\(\?, 10\)\s+AND created_date <= LEFT\(\?, 10\)\s+AND created_at >= \?\s+AND created_at <  \?/);
   assert.doesNotMatch(q.sql, /created_date\s*(>=|<|<=)\s*DATE\(\?\)/);
   // orders params follow the 8 sessions params: current window group, then baseline group
   assert.deepEqual(q.params.slice(8, 16), [
-    '2026-09-14 00:00:00', '2026-09-15 00:00:00', '2026-09-14 00:00:00', '2026-09-15 00:00:00',
-    '2026-09-13 00:00:00', '2026-09-14 00:00:00', '2026-09-13 00:00:00', '2026-09-14 00:00:00'
+    '2026-09-14 00:00:00', '2026-09-14 14:00:00', '2026-09-14 00:00:00', '2026-09-14 14:00:00',
+    '2026-09-13 00:00:00', '2026-09-13 14:00:00', '2026-09-13 00:00:00', '2026-09-13 14:00:00'
   ]);
+});
+
+test('whole-day KPI windows read sessions, add-to-cart sessions and orders from overall_summary', () => {
+  const q = metricQuery({ tenantId: 'TMC', metrics: ['sessions', 'orders', 'cvr', 'atc_rate', 'sales', 'aov'], window, baselineWindow, timezone: 'UTC' });
+  assert.match(q.sql, /SUM\(total_sessions\), 0\) AS sessions/);
+  assert.match(q.sql, /SUM\(total_atc_sessions\), 0\) AS atc_sessions/);
+  assert.match(q.sql, /SUM\(adjusted_total_sessions\), 0\) AS adjusted_sessions/);
+  assert.match(q.sql, /SUM\(total_orders\), 0\) AS orders/);
+  assert.doesNotMatch(q.sql, /hourly_sessions_summary_shopify|shopify_orders|hour_wise_sales/);
+  assert.equal((q.sql.match(/\?/g) || []).length, q.params.length);
+});
+
+test('a zero-length (empty) baseline stays on the cheap hourly path', () => {
+  const q = metricQuery({
+    tenantId: 'TMC', metrics: ['cvr'], timezone: 'UTC', window,
+    baselineWindow: { start: window.start, end: window.start }
+  });
+  assert.deepEqual(q.meta.kpiSources.sessions, { current: 'overall_summary', baseline: 'hourly' });
+  assert.deepEqual(q.meta.kpiSources.orders, { current: 'overall_summary', baseline: 'shopify_orders' });
 });

@@ -11,6 +11,7 @@ const {
 const { executeRun } = require('../../server/services/workflowExecutionService');
 const { getRetryDelayMs } = require('../domain/retryPolicy');
 const { RUN_TIMEOUT_CODE, RUN_CANCELED_CODE } = require('../../lib/runTimeout');
+const { isNonRetryableError } = require('../../lib/runErrors');
 const { getRabbitWorkflowRunQueue } = require('./runQueue/RabbitWorkflowRunQueue');
 
 async function processOne(workerId) {
@@ -21,7 +22,7 @@ async function processOne(workerId) {
   return processClaimedRun(run);
 }
 
-async function processClaimedRun(run) {
+async function processClaimedRun(run, { execute = executeRun, promote = promoteDeferredRun } = {}) {
   if (!run) return null;
 
   const heartbeat = startLeaseHeartbeat({
@@ -32,9 +33,9 @@ async function processClaimedRun(run) {
   try {
     const workflowName = run.definitionJson?.name || 'unknown';
     console.log(`[scheduler-worker] executing run=${run._id} workflow=${run.workflowId} workflowName="${workflowName}" tenant=${run.tenantId} trigger=${run.triggerType || 'unknown'} attempt=${run.attempt}/${run.maxAttempts || 3}`);
-    await executeRun({ run });
+    await execute({ run });
     console.log(`[scheduler-worker] completed run=${run._id} workflow=${run.workflowId} workflowName="${workflowName}" status=${run.status}`);
-    await promoteDeferredRun(run.tenantId, run.workflowId, run.executionKey);
+    await promote(run.tenantId, run.workflowId, run.executionKey);
     return { runId: run._id, status: 'completed' };
   } catch (error) {
     const workflowName = run.definitionJson?.name || 'unknown';
@@ -55,7 +56,20 @@ async function processClaimedRun(run) {
       run.leaseExpiresAt = null;
       await run.save();
       console.error(`[scheduler-worker] timed out run=${run._id} workflow=${run.workflowId} workflowName="${workflowName}" lastError=${run.lastError}`);
-      await promoteDeferredRun(run.tenantId, run.workflowId, run.executionKey);
+      await promote(run.tenantId, run.workflowId, run.executionKey);
+      return { runId: run._id, status: 'failed' };
+    }
+
+    // A misconfigured workflow fails the same way every time: fail it now instead of retrying.
+    if (isNonRetryableError(error)) {
+      run.status = 'failed';
+      run.finishedAt = new Date();
+      run.lastError = error.message;
+      run.leaseOwner = null;
+      run.leaseExpiresAt = null;
+      await run.save();
+      console.error(`[scheduler-worker] failed run=${run._id} workflow=${run.workflowId} workflowName="${workflowName}" (configuration error, not retried) lastError=${run.lastError}`);
+      await promote(run.tenantId, run.workflowId, run.executionKey);
       return { runId: run._id, status: 'failed' };
     }
 
@@ -72,7 +86,7 @@ async function processClaimedRun(run) {
       run.leaseExpiresAt = null;
       await run.save();
       console.error(`[scheduler-worker] dead-lettered run=${run._id} workflow=${run.workflowId} workflowName="${workflowName}" lastError=${run.lastError}`);
-      await promoteDeferredRun(run.tenantId, run.workflowId, run.executionKey);
+      await promote(run.tenantId, run.workflowId, run.executionKey);
       return { runId: run._id, status: 'dead_letter' };
     }
 
@@ -94,19 +108,54 @@ function useRabbitRunQueue() {
   return process.env.SCHEDULER_RUN_QUEUE_BACKEND === 'rabbit';
 }
 
-async function runLoopMongo({ workerId, intervalMs = 2000, stopSignal }) {
-  while (!stopSignal.stopped) {
+// How many runs one worker executes at once (SCHEDULER_WORKER_CONCURRENCY, default 3). Claiming is an
+// atomic findOneAndUpdate, so lanes never take the same run, and runs of one workflow are still
+// serialised by the overlap policy.
+function getWorkerConcurrency() {
+  const value = Math.floor(Number(process.env.SCHEDULER_WORKER_CONCURRENCY));
+  return Number.isFinite(value) && value >= 1 ? Math.min(value, 20) : 3;
+}
+
+// Housekeeping (expired leases, runs past their time limit). It used to run before every 2 s poll;
+// it only needs to run every so often.
+async function runMaintenance() {
+  await recoverExpiredRunningRuns();
+  await failTimedOutRuns();
+}
+
+async function runLoopMongo({
+  workerId, intervalMs = 2000, stopSignal, concurrency = getWorkerConcurrency(), processor = processOne, maintenance = runMaintenance
+}) {
+  const maintenanceTickMs = Number(process.env.SCHEDULER_MAINTENANCE_TICK_MS) || 30000;
+  const maintain = async () => {
     try {
-      await recoverExpiredRunningRuns();
-      await failTimedOutRuns();
-      const result = await processOne(workerId);
-      if (!result) {
+      await maintenance();
+    } catch (error) {
+      console.error('[scheduler-worker] maintenance failed', error.message);
+    }
+  };
+  await maintain();
+  const maintenanceTimer = setInterval(maintain, maintenanceTickMs);
+  if (typeof maintenanceTimer.unref === 'function') maintenanceTimer.unref();
+
+  const lane = async () => {
+    while (!stopSignal.stopped) {
+      try {
+        const result = await processor(workerId);
+        if (!result) {
+          await new Promise(resolve => setTimeout(resolve, intervalMs));
+        }
+      } catch (error) {
+        console.error('[scheduler-worker] iteration failed', error);
         await new Promise(resolve => setTimeout(resolve, intervalMs));
       }
-    } catch (error) {
-      console.error('[scheduler-worker] iteration failed', error);
-      await new Promise(resolve => setTimeout(resolve, intervalMs));
     }
+  };
+
+  try {
+    await Promise.all(Array.from({ length: concurrency }, lane));
+  } finally {
+    clearInterval(maintenanceTimer);
   }
 }
 
@@ -162,6 +211,8 @@ async function runLoop({ workerId, intervalMs = 2000, stopSignal }) {
 
 module.exports = {
   runLoop,
+  runLoopMongo,
+  getWorkerConcurrency,
   processOne,
   processClaimedRun
 };

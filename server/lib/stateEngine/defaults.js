@@ -62,9 +62,58 @@ function resolveThresholds(config) {
   return { normal, critical };
 }
 
+// Alert storm protection (daily quota + exceptional bypass). Disabled unless a workflow
+// opts in, so existing workflows behave exactly as before. A null limit is unlimited.
+const DEFAULT_STORM_PROTECTION = Object.freeze({
+  enabled: false,
+  daily_limits: { triggered: null, critical: null, total: null },
+  exceptional_alerts: {
+    enabled: false,
+    absolute: { enabled: false, value: null },
+    difference: { enabled: false, value: null }
+  }
+});
+
+function toLimit(raw) {
+  if (raw === null || raw === undefined || raw === '') return null;
+  const n = Number(raw);
+  return Number.isInteger(n) && n >= 1 ? n : null;
+}
+
+function toFiniteOrNull(raw) {
+  if (raw === null || raw === undefined || raw === '') return null;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : null;
+}
+
+function normalizeStormProtection(storm) {
+  const s = storm && typeof storm === 'object' ? storm : {};
+  const exc = s.exceptional_alerts || {};
+  const absoluteValue = toFiniteOrNull(exc.absolute?.value);
+  const differenceValue = toFiniteOrNull(exc.difference?.value);
+  return {
+    enabled: s.enabled === true,
+    daily_limits: {
+      triggered: toLimit(s.daily_limits?.triggered),
+      critical: toLimit(s.daily_limits?.critical),
+      total: toLimit(s.daily_limits?.total)
+    },
+    exceptional_alerts: {
+      enabled: exc.enabled === true,
+      // A toggle without a usable value is inactive rather than guessed.
+      absolute: { enabled: exc.absolute?.enabled === true && absoluteValue !== null, value: absoluteValue },
+      difference: {
+        enabled: exc.difference?.enabled === true && differenceValue !== null && differenceValue > 0,
+        value: differenceValue
+      }
+    }
+  };
+}
+
 function normalizeStateConfig(config = {}) {
   const d = DEFAULT_STATE_CONFIG;
   return {
+    storm_protection: normalizeStormProtection(config.storm_protection),
     enabled: config.enabled === true,
     finding: { metric: config.finding?.metric || d.finding.metric },
     thresholds: resolveThresholds(config),
@@ -96,6 +145,8 @@ module.exports = {
   REASONS,
   WORKFLOW_PURPOSES,
   DEFAULT_STATE_CONFIG,
+  DEFAULT_STORM_PROTECTION,
+  normalizeStormProtection,
   getWorkflowPurpose,
   isStateEngineEnabled,
   isAutomaticTrigger,

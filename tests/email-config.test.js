@@ -256,6 +256,8 @@ function fakeModels() {
       },
       WorkflowVersion: {
         findOne: (query) => ({ lean: async () => versions.find(matchVersion(query)) || null }),
+        // one query for many workflows: `$or` of per-workflow version queries
+        find: (query) => ({ lean: async () => versions.filter((version) => (query.$or || []).some((clause) => matchVersion(clause)(version))) }),
         create: async (doc) => { versions.push(doc); return doc; }
       },
       User: { find: () => chain(users) },

@@ -28,6 +28,11 @@ const WorkflowRunSchema = new mongoose.Schema(
     // the decision but never change alert state, start a cooldown or send anything.
     // Scheduled and alert-triggered runs are always live. See stateEngineService.previewExecution.
     notifyLive: { type: Boolean, default: false },
+    // Testing mode (manual runs only): the run emails what it produced, ignoring alert state, cooldown and
+    // quiet hours, and saves none of them. testAudience: 'me' (only the person who ran it) or 'team'
+    // (the workflow's real recipients). See stateEngineService.deliverTestExecution.
+    testMode: { type: Boolean, default: false },
+    testAudience: { type: String, enum: ['me', 'team'], default: 'me' },
     executionKey: { type: String, index: true },
     context: { type: Object, required: true },
     definitionJson: { type: Object, required: true },

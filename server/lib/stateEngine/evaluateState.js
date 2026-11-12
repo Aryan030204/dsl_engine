@@ -1,6 +1,8 @@
 const { STATES, REASONS, defaultRuntimeState, isAutomaticTrigger } = require('./defaults');
 const { classifySeverity } = require('./severity');
 const { isQuietMinute, effectiveElapsedMs } = require('./quietHours');
+const { evaluateStorm, currentStorm } = require('./stormProtection');
+const { localDayKey } = require('./localDay');
 
 function toIso(value) {
   if (!value) return null;
@@ -27,7 +29,7 @@ function cooldownMinutesFor(state, config) {
 
 // Picks the notification a transition is a candidate for, and which gates apply.
 //   cooldownState: whose cooldown duration gates this send (null = cooldown bypassed)
-//   quietBypass:   true only for a direct NORMAL -> CRITICAL escalation
+//   quietBypass:   always false now: quiet hours hold every notification, critical included
 // Returning to NORMAL never notifies: there are no recovery emails.
 function resolveCandidate({ prev, next }) {
   if (next === STATES.NORMAL) return null;
@@ -36,7 +38,7 @@ function resolveCandidate({ prev, next }) {
     if (prev === STATES.CRITICAL) {
       return { reason: REASONS.REMINDER, cooldownState: STATES.CRITICAL, quietBypass: false };
     }
-    return { reason: REASONS.ESCALATION, cooldownState: null, quietBypass: prev === STATES.NORMAL };
+    return { reason: REASONS.ESCALATION, cooldownState: null, quietBypass: false };
   }
 
   // next === TRIGGERED
@@ -74,6 +76,8 @@ function evaluateState({ prior: rawPrior, finding, triggerType, now = new Date()
     cooldownActive = durationMs > 0 && effectiveElapsed < durationMs;
   }
 
+  // `prior.last_value` is the previous conclusive finding value (previous-value source for
+  // the difference exception); legacy state docs fall back to last_decision in stormProtection.
   let shouldSend = false;
   let suppressedBy = null;
   if (candidate) {
@@ -84,6 +88,24 @@ function evaluateState({ prior: rawPrior, finding, triggerType, now = new Date()
     } else {
       shouldSend = true;
     }
+  }
+
+  // Storm protection runs last, only on a notification that would otherwise send. It can
+  // hold it (daily quota) or flag it exceptional; state, cooldown and quiet hours are untouched.
+  let storm = null;
+  let stormNext = prior.storm || null;
+  if (shouldSend && config.storm_protection?.enabled) {
+    storm = evaluateStorm({ resultingState: next, finding, prior, config, now: nowDate, timezone });
+    if (storm.allowed) {
+      stormNext = storm.sent;
+    } else {
+      shouldSend = false;
+      suppressedBy = 'daily_limit';
+      stormNext = storm.held;
+    }
+  } else if (candidate && config.storm_protection?.enabled) {
+    // Held by cooldown/quiet hours: nothing consumed, but keep the day key current.
+    stormNext = currentStorm(prior, localDayKey(nowDate, timezone));
   }
 
   // An escalation ignores cooldown; for the audit trail, only call that a bypass when
@@ -117,8 +139,12 @@ function evaluateState({ prior: rawPrior, finding, triggerType, now = new Date()
       candidate_reason: candidate?.reason || null,
       should_send: shouldSend,
       reason: shouldSend ? candidate.reason : null,
-      suppressed_by: suppressedBy
+      suppressed_by: suppressedBy,
+      ...(storm?.exceptional
+        ? { exceptional: true, exception_reasons: storm.reasons, severity: STATES.CRITICAL }
+        : {})
     },
+    ...(storm ? { storm: storm.audit } : {}),
     cooldown: {
       active: cooldownActive,
       bypassed: cooldownBypassed,
@@ -130,10 +156,13 @@ function evaluateState({ prior: rawPrior, finding, triggerType, now = new Date()
     // send can hand its cooldown back -- see stateEngineService's rollback.
     prior_bookkeeping: {
       cooldown: prior.cooldown,
-      last_alert_at: toIso(prior.last_alert_at)
+      last_alert_at: toIso(prior.last_alert_at),
+      storm: prior.storm || null
     },
     next: {
       state: next,
+      last_value: finding.value,
+      ...(config.storm_protection?.enabled ? { storm: stormNext } : {}),
       cooldown: nextCooldown,
       last_evaluated_at: nowIso,
       last_alert_at: shouldSend ? nowIso : toIso(prior.last_alert_at)

@@ -51,16 +51,17 @@ function getWorkflowTenantIds(workflow = {}) {
   return workflow.tenantId ? [workflow.tenantId] : [];
 }
 
-// The tenantId stored on a workflow's version rows. The unique index (tenantId, workflowId, version) makes this
-// the "namespace" a version number must be unique in.
-//   - A workflow document that has its own tenantId is a per-tenant copy: older "create for selected tenants"
-//     runs made one document per tenant that all share ONE workflowId. Each copy keeps its own history under
-//     its own tenantId; with null here, the copies would share a single numbering space and a save of
-//     version 1.3 for one tenant would collide with another tenant's 1.3 (and could never be fixed by reloading).
-//   - A document with no tenantId (one document for one or many tenants, with its own unique workflowId)
-//     stores null, as before.
+// The tenantId a workflow's versions are stored under. A workflow document of its own (one that lists
+// its tenants in tenantIds with no tenantId, or several tenants) stores them under null. Legacy per-tenant
+// copies, one document per tenant that all share one workflowId (wf_1c1af41ac506 exists for VAMA, TMC, PTS
+// and BBB), keep them under their own tenant: the unique key is (tenantId, workflowId, version), so
+// putting every copy under null made two tenants collide on the same version number (the "newer version
+// was already saved" error on a save).
 function getVersionTenantId(workflow = {}) {
-  if (workflow.tenantId) return workflow.tenantId;
+  const tenantIds = Array.isArray(workflow.tenantIds) ? workflow.tenantIds : [];
+  if (workflow.tenantId && (tenantIds.length === 0 || (tenantIds.length === 1 && tenantIds[0] === workflow.tenantId))) {
+    return workflow.tenantId;
+  }
   return null;
 }
 
@@ -187,6 +188,28 @@ async function resolveWorkflowVersion({
   };
 }
 
+// The definition of each workflow's latest version, in ONE query instead of one per workflow.
+// `versionModel` is injectable for tests. Returns [{ workflow, definition }] in the order given;
+// definition is null when the workflow has no such version.
+async function loadLatestDefinitions(workflows, versionModel = WorkflowVersion) {
+  const list = Array.isArray(workflows) ? workflows : [];
+  if (!list.length) return [];
+
+  const versions = await versionModel.find({
+    $or: list.map((workflow) => buildWorkflowVersionQuery(workflow, workflow.workflowId, workflow.latestVersion))
+  }).lean();
+
+  const byKey = new Map();
+  for (const version of versions) {
+    const key = `${version.scope || 'tenant'}\u0000${version.workflowId}\u0000${version.version}`;
+    if (!byKey.has(key)) byKey.set(key, version);
+  }
+  return list.map((workflow) => {
+    const key = `${workflow.scope || 'tenant'}\u0000${workflow.workflowId}\u0000${workflow.latestVersion}`;
+    return { workflow, definition: byKey.get(key)?.definitionJson || null };
+  });
+}
+
 async function resolveWorkflowReference({ tenantId, ref }) {
   const workflowId = ref?.workflow_id;
   const version = ref?.version;
@@ -220,6 +243,7 @@ module.exports = {
   normalizeWorkflowIdentity,
   buildTenantWorkflowQuery,
   buildWorkflowVersionQuery,
+  loadLatestDefinitions,
   getWorkflowTenantIds,
   getVersionTenantId,
 };
